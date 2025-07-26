@@ -13,9 +13,10 @@ This framework uses an LLM to automate browser testing through high-level, natur
 ## ✨ Key Features
 
 * **Natural Language Tests**: Write tests using descriptive, natural language tasks instead of brittle selectors.
+* **Multi-LLM Support**: Supports all LLM providers from browser_use - Gemini, OpenAI, Anthropic, Azure OpenAI, and Groq.
 * **Adaptable Logic**: The core testing logic is designed to be easily adapted for any website.
 * **Insightful Reports**: Allure reports provide screenshots, agent actions, and AI "thoughts" for each step, giving you a clear view into the test execution.
-* **Environment Documentation**: Key details about the test environment—such as the OS, Python version, and browser version—are automatically included in the Allure report for better debugging and context.
+* **Environment Documentation**: Key details about the test environment—such as the OS, Python version, browser version, and active LLM provider—are automatically included in the Allure report for better debugging and context.
 * **Customizable Browser Settings**: The framework allows for detailed configuration of browser settings. For more information, see the [Browser Settings documentation](https://docs.browser-use.com/customize/browser-settings).
 * **Example Implementation**: `test_community_website.py` provides a practical example of how to write a test suite.
 
@@ -86,13 +87,36 @@ For more information on how to use Allure with pytest, see the [official Allure 
     cp .env.example .env
     ```
 
-    Next, open the `.env` file and add your `GOOGLE_API_KEY`. This file is pre-configured with sensible defaults, but you can customize them to fit your needs.
+    Next, open the `.env` file and configure your LLM provider. This file is pre-configured with sensible defaults, but you can customize them to fit your needs.
 
-    **Required Variables**:
-    * `GOOGLE_API_KEY`: Your Google API key for accessing the Gemini model.
+    **LLM Provider Configuration**:
+    * `LLM_PROVIDER`: Choose your LLM provider. Supported values: `"gemini"` (default), `"openai"`, `"anthropic"`, `"azure"`, `"groq"`.
 
-    **Optional Variables**:
-    * `GEMINI_MODEL`: The specific Gemini model you want to use (e.g., `gemini-2.5-pro`). For a list of available models, see the [Gemini models documentation](https://ai.google.dev/gemini-api/docs/models).
+    **Provider-Specific Configuration**:
+
+    **For Gemini (Google):**
+    * `GOOGLE_API_KEY`: Your Google API key for accessing the Gemini model (required when using Gemini).
+    * `GEMINI_MODEL`: The specific Gemini model to use (default: `"gemini-2.5-pro"`).
+
+    **For OpenAI:**
+    * `OPENAI_API_KEY`: Your OpenAI API key (required when using OpenAI).
+    * `OPENAI_MODEL`: The specific OpenAI model to use (default: `"gpt-4o-mini"`).
+
+    **For Anthropic (Claude):**
+    * `ANTHROPIC_API_KEY`: Your Anthropic API key (required when using Anthropic).
+    * `ANTHROPIC_MODEL`: The specific Anthropic model to use (default: `"claude-3-5-sonnet-20241022"`).
+
+    **For Azure OpenAI:**
+    * `AZURE_OPENAI_API_KEY`: Your Azure OpenAI API key (required when using Azure).
+    * `AZURE_OPENAI_ENDPOINT`: Your Azure OpenAI endpoint URL (required when using Azure).
+    * `AZURE_OPENAI_DEPLOYMENT_NAME`: The deployment name for your model (required when using Azure).
+    * `AZURE_OPENAI_API_VERSION`: The API version to use (default: `"2024-02-01"`).
+
+    **For Groq:**
+    * `GROQ_API_KEY`: Your Groq API key (required when using Groq).
+    * `GROQ_MODEL`: The specific Groq model to use (default: `"llama-3.3-70b-versatile"`).
+
+    **Browser Configuration**:
     * `HEADLESS`: Set to `true` to run in headless mode (without a visible browser UI) or `false` to run with a visible UI.
 
 ## 🧪 Running the Tests

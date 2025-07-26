@@ -9,13 +9,267 @@ from typing import AsyncGenerator, Dict, Optional
 import allure
 import pytest
 from browser_use import Agent, BrowserProfile, BrowserSession
-from browser_use.llm import ChatGoogle
 from browser_use.utils import get_browser_use_version
 from dotenv import load_dotenv
 from playwright.sync_api import sync_playwright
 
 # Load environment variables from .env file
 load_dotenv()
+
+
+def create_llm_instance():
+    """
+    Factory function to create the appropriate LLM instance based on environment configuration.
+
+    Reads the LLM_PROVIDER environment variable to determine which provider to use.
+    Supported values: "gemini", "openai", "anthropic", "azure", "groq"
+
+    Returns:
+        An instance of the appropriate LLM provider
+
+    Raises:
+        ValueError: If LLM_PROVIDER contains an unsupported value or required API keys are missing
+        ImportError: If the required provider module is not available
+        EnvironmentError: If configuration issues are detected
+    """
+    # Get the provider from environment, validate it's not empty
+    provider = os.getenv("LLM_PROVIDER", "gemini").lower().strip()
+
+    if not provider:
+        raise ValueError(
+            "LLM_PROVIDER environment variable is empty. "
+            "Please set it to one of: 'gemini', 'openai', 'anthropic', 'azure', 'groq'"
+        )
+
+    # Define supported providers for better error messages
+    supported_providers = ["gemini", "openai", "anthropic", "azure", "groq"]
+
+    if provider not in supported_providers:
+        raise ValueError(
+            f"Invalid LLM_PROVIDER: '{provider}'. "
+            f"Supported values are: {', '.join(supported_providers)}. "
+            "Please check your .env file or environment variables."
+        )
+
+    try:
+        if provider == "gemini":
+            # Try to import the required module
+            try:
+                from browser_use.llm import ChatGoogle
+            except ImportError as e:
+                raise ImportError(
+                    f"Failed to import ChatGoogle for Gemini provider. "
+                    f"Please ensure browser_use[gemini] is installed. "
+                    f"You can install it with: pip install browser_use[gemini]\n"
+                    f"Original error: {str(e)}"
+                )
+
+            model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-pro")
+            api_key = os.getenv("GOOGLE_API_KEY")
+
+            # Validate API key
+            if not api_key or api_key == "YOUR_API_KEY":
+                raise ValueError(
+                    "GOOGLE_API_KEY is not properly configured for Gemini provider. "
+                    "Please set a valid API key in your .env file or environment variables. "
+                    "You can get an API key from: https://makersuite.google.com/app/apikey"
+                )
+
+            # Validate API key format (Gemini keys are typically 39-40 characters)
+            if len(api_key) < 30 or len(api_key) > 50:
+                raise ValueError(
+                    "GOOGLE_API_KEY appears to be invalid (incorrect length). "
+                    "Gemini API keys are typically 39-40 characters long. "
+                    "Please check your API key configuration."
+                )
+
+            return ChatGoogle(model=model_name, api_key=api_key)
+
+        elif provider == "openai":
+            # Try to import the required module
+            try:
+                from browser_use.llm import ChatOpenAI
+            except ImportError as e:
+                raise ImportError(
+                    f"Failed to import ChatOpenAI for OpenAI provider. "
+                    f"Please ensure browser_use[openai] is installed. "
+                    f"You can install it with: pip install browser_use[openai]\n"
+                    f"Original error: {str(e)}"
+                )
+
+            model_name = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+            api_key = os.getenv("OPENAI_API_KEY")
+
+            # Validate API key
+            if not api_key or api_key == "YOUR_API_KEY":
+                raise ValueError(
+                    "OPENAI_API_KEY is not properly configured for OpenAI provider. "
+                    "Please set a valid API key in your .env file or environment variables. "
+                    "You can get an API key from: https://platform.openai.com/api-keys"
+                )
+
+            # Validate API key format (OpenAI keys start with 'sk-' and are ~51 characters)
+            if not api_key.startswith("sk-"):
+                raise ValueError(
+                    "OPENAI_API_KEY appears to be invalid. "
+                    "OpenAI API keys must start with 'sk-'. "
+                    "Please check your API key configuration."
+                )
+            
+            if len(api_key) < 45 or len(api_key) > 60:
+                raise ValueError(
+                    "OPENAI_API_KEY appears to be invalid (incorrect length). "
+                    "OpenAI API keys are typically around 51 characters long. "
+                    "Please check your API key configuration."
+                )
+
+            return ChatOpenAI(model=model_name, api_key=api_key)
+
+        elif provider == "anthropic":
+            # Try to import the required module
+            try:
+                from browser_use.llm import ChatAnthropic
+            except ImportError as e:
+                raise ImportError(
+                    f"Failed to import ChatAnthropic for Anthropic provider. "
+                    f"Please ensure browser_use[anthropic] is installed. "
+                    f"You can install it with: pip install browser_use[anthropic]\n"
+                    f"Original error: {str(e)}"
+                )
+
+            model_name = os.getenv("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022")
+            api_key = os.getenv("ANTHROPIC_API_KEY")
+
+            # Validate API key
+            if not api_key or api_key == "YOUR_API_KEY":
+                raise ValueError(
+                    "ANTHROPIC_API_KEY is not properly configured for Anthropic provider. "
+                    "Please set a valid API key in your .env file or environment variables. "
+                    "You can get an API key from: https://console.anthropic.com/account/keys"
+                )
+
+            # Validate API key format (Anthropic keys start with 'sk-ant-' and are ~108 characters)
+            if not api_key.startswith("sk-ant-"):
+                raise ValueError(
+                    "ANTHROPIC_API_KEY appears to be invalid. "
+                    "Anthropic API keys must start with 'sk-ant-'. "
+                    "Please check your API key configuration."
+                )
+            
+            if len(api_key) < 100 or len(api_key) > 120:
+                raise ValueError(
+                    "ANTHROPIC_API_KEY appears to be invalid (incorrect length). "
+                    "Anthropic API keys are typically around 108 characters long. "
+                    "Please check your API key configuration."
+                )
+
+            return ChatAnthropic(model=model_name, api_key=api_key)
+
+        elif provider == "azure":
+            # Try to import the required module
+            try:
+                from browser_use.llm import ChatAzureOpenAI
+            except ImportError as e:
+                raise ImportError(
+                    f"Failed to import ChatAzureOpenAI for Azure provider. "
+                    f"Please ensure browser_use[azure] is installed. "
+                    f"You can install it with: pip install browser_use[azure]\n"
+                    f"Original error: {str(e)}"
+                )
+
+            model_name = os.getenv("AZURE_MODEL", "gpt-4o-mini")
+            api_key = os.getenv("AZURE_API_KEY")
+            endpoint = os.getenv("AZURE_ENDPOINT")
+            deployment = os.getenv("AZURE_DEPLOYMENT")
+            api_version = os.getenv("AZURE_API_VERSION", "2024-10-21")
+
+            # Validate required parameters
+            if not api_key or api_key == "YOUR_API_KEY":
+                raise ValueError(
+                    "AZURE_API_KEY is not properly configured for Azure provider. "
+                    "Please set a valid API key in your .env file or environment variables. "
+                    "You can get an API key from your Azure portal."
+                )
+            
+            # Validate API key format (Azure keys are typically 32 hex characters)
+            if len(api_key) < 30 or len(api_key) > 40:
+                raise ValueError(
+                    "AZURE_API_KEY appears to be invalid (incorrect length). "
+                    "Azure API keys are typically 32 characters long. "
+                    "Please check your API key configuration."
+                )
+
+            if not endpoint:
+                raise ValueError(
+                    "AZURE_ENDPOINT is required for Azure provider. "
+                    "Please set your Azure OpenAI endpoint URL in your .env file. "
+                    "Example: https://your-resource.openai.azure.com/"
+                )
+
+            # Azure can use either deployment name or model name
+            if not deployment and not model_name:
+                raise ValueError(
+                    "Either AZURE_DEPLOYMENT or AZURE_MODEL must be set for Azure provider. "
+                    "Please configure your deployment name or model name."
+                )
+
+            return ChatAzureOpenAI(
+                model=model_name,
+                api_key=api_key,
+                azure_endpoint=endpoint,
+                azure_deployment=deployment,
+                api_version=api_version
+            )
+
+        elif provider == "groq":
+            # Try to import the required module
+            try:
+                from browser_use.llm import ChatGroq
+            except ImportError as e:
+                raise ImportError(
+                    f"Failed to import ChatGroq for Groq provider. "
+                    f"Please ensure browser_use[groq] is installed. "
+                    f"You can install it with: pip install browser_use[groq]\n"
+                    f"Original error: {str(e)}"
+                )
+
+            model_name = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+            api_key = os.getenv("GROQ_API_KEY")
+
+            # Validate API key
+            if not api_key or api_key == "YOUR_API_KEY":
+                raise ValueError(
+                    "GROQ_API_KEY is not properly configured for Groq provider. "
+                    "Please set a valid API key in your .env file or environment variables. "
+                    "You can get an API key from: https://console.groq.com/keys"
+                )
+
+            # Validate API key format (Groq keys start with 'gsk_' and are ~56 characters)
+            if not api_key.startswith("gsk_"):
+                raise ValueError(
+                    "GROQ_API_KEY appears to be invalid. "
+                    "Groq API keys must start with 'gsk_'. "
+                    "Please check your API key configuration."
+                )
+            
+            if len(api_key) < 50 or len(api_key) > 65:
+                raise ValueError(
+                    "GROQ_API_KEY appears to be invalid (incorrect length). "
+                    "Groq API keys are typically around 56 characters long. "
+                    "Please check your API key configuration."
+                )
+
+            return ChatGroq(model=model_name, api_key=api_key)
+
+    except Exception as e:
+        # If it's already one of our custom errors, re-raise it
+        if isinstance(e, (ValueError, ImportError, EnvironmentError)):
+            raise
+        # Otherwise, wrap it with more context
+        raise EnvironmentError(
+            f"Failed to initialize {provider} LLM provider. "
+            f"Error: {str(e)}"
+        )
 
 
 @pytest.fixture(scope="session")
@@ -47,7 +301,7 @@ def browser_version_info(browser_profile: BrowserProfile) -> Dict[str, str]:
 @pytest.fixture(scope="session", autouse=True)
 def environment_reporter(
     request: pytest.FixtureRequest,
-    llm: ChatGoogle,
+    llm,
     browser_profile: BrowserProfile,
     browser_version_info: Dict[str, str],
 ):
@@ -70,6 +324,13 @@ def environment_reporter(
         logging.error(f"Permission denied to create report directory: {allure_dir}")
         return  # Exit if we can't create the directory
 
+    # Get LLM provider and model name dynamically
+    llm_provider = getattr(llm, 'provider', 'unknown')
+    # Map 'google' to 'gemini' for consistency with LLM_PROVIDER env var
+    if llm_provider == 'google':
+        llm_provider = 'gemini'
+    llm_model_name = getattr(llm, 'model_name', getattr(llm, 'model', 'unknown'))
+
     env_props = {
         "operating_system": f"{platform.system()} {platform.release()}",
         "python_version": sys.version.split(" ")[0],
@@ -80,7 +341,8 @@ def environment_reporter(
         ),
         "browser_version": browser_version_info["browser_version"],
         "headless_mode": str(browser_profile.headless),
-        "llm_model": llm.model,
+        "llm_provider": llm_provider,
+        "llm_model": llm_model_name,
     }
 
     try:
@@ -92,11 +354,21 @@ def environment_reporter(
 
 
 @pytest.fixture(scope="session")
-def llm() -> ChatGoogle:
-    """Session-scoped fixture to initialize the language model."""
-    DEFAULT_MODEL = "gemini-2.5-pro"
-    model_name = os.getenv("GEMINI_MODEL", DEFAULT_MODEL)
-    return ChatGoogle(model=model_name)
+def llm():
+    """Session-scoped fixture to initialize the language model using the factory function.
+
+    This fixture will fail early with clear error messages if there are configuration issues.
+    """
+    try:
+        return create_llm_instance()
+    except (ValueError, ImportError, EnvironmentError) as e:
+        # Log the error for better visibility
+        logging.error(f"Failed to initialize LLM: {str(e)}")
+        # Re-raise to fail the test session with clear error
+        raise pytest.UsageError(
+            f"\n\nLLM Configuration Error:\n{str(e)}\n\n"
+            "Please check your environment configuration and try again.\n"
+        )
 
 
 @pytest.fixture(scope="session")
@@ -126,7 +398,7 @@ class BaseAgentTest:
 
     async def validate_task(
         self,
-        llm: ChatGoogle,
+        llm,
         browser_session: BrowserSession,
         task_instruction: str,
         expected_substring: Optional[str] = None,
@@ -230,7 +502,7 @@ async def record_step(agent: Agent):
 @allure.step("Running browser agent with task: {task_description}")
 async def run_agent_task(
     task_description: str,
-    llm: ChatGoogle,
+    llm,
     browser_session: BrowserSession,
 ) -> Optional[str]:
     """Initializes and runs the browser agent for a given task using an active browser session."""
