@@ -394,7 +394,7 @@ async def browser_session(
 class BaseAgentTest:
     """Base class for agent-based tests to reduce boilerplate."""
 
-    BASE_URL = "https://www.googlecloudcommunity.com/"
+    BASE_URL = "https://discuss.google.dev/"
 
     async def validate_task(
         self,

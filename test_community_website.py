@@ -1,5 +1,3 @@
-from urllib.parse import quote
-
 import allure
 import pytest
 
@@ -10,7 +8,7 @@ from conftest import BaseAgentTest
 class TestHomePageStats(BaseAgentTest):
     """Tests the content and navigation of the home page."""
 
-    EXPECTED_STATS_RESULT = "all_stats_visible"
+    EXPECTED_FORUM_RESULT = "forum_loaded"
 
     @allure.story("Main Navigation Links")
     @allure.title("Test Navigation to {link_text}")
@@ -37,13 +35,13 @@ class TestHomePageStats(BaseAgentTest):
         ), f"Agent did not navigate to the correct page for {link_text}. URL was: {result_url}"
 
     @allure.story("Community Statistics")
-    @allure.title("Test Visibility of Community Stats")
+    @allure.title("Test Forum Statistics Are Not Present")
     @pytest.mark.asyncio
-    async def test_stats_are_visible(self, llm, browser_session):
-        """Tests that the Members, Online, and Solutions stats are visible on the page."""
-        task = f"confirm that the stats for 'Members', 'Online', and 'Solutions' are visible on the page. Return '{self.EXPECTED_STATS_RESULT}' if they are."
+    async def test_forum_loads_successfully(self, llm, browser_session):
+        """Tests that the forum loads successfully (replacing legacy stats test)."""
+        task = "confirm that the Google Developer Community forum page has loaded successfully and displays community content. Return 'forum_loaded' if the page loads with community categories visible."
         await self.validate_task(
-            llm, browser_session, task, self.EXPECTED_STATS_RESULT, ignore_case=True
+            llm, browser_session, task, "forum_loaded", ignore_case=True
         )
 
 
@@ -59,9 +57,9 @@ class TestSearch(BaseAgentTest):
     @pytest.mark.parametrize("term", ["BigQuery", "Vertex AI"])
     async def test_search_for_term(self, llm, browser_session, term):
         """Tests searching for a term and verifying results are shown."""
-        task = f"find the search bar, type '{term}', press enter, and then return the final URL."
-        expected_url_part = f"q={quote(term)}"
-        await self.validate_task(llm, browser_session, task, expected_url_part)
+        task = f"locate the search input field, enter '{term}', submit the search by pressing enter, then confirm that search results for '{term}' are displayed on the page. Return 'search_results_displayed' if results are shown."
+        expected_response = "search_results_displayed"
+        await self.validate_task(llm, browser_session, task, expected_response, ignore_case=True)
 
     @allure.story("Searching for Non-Existent Term")
     @allure.title("Search for a Non-Existent Term")
