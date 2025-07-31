@@ -6,7 +6,7 @@ This framework uses an LLM to automate browser testing through high-level, natur
 
 * **[`browser-use`](https://github.com/browser-use/browser-use)**: Translates natural language into browser actions with an agent.
 * **[`pytest`](https://github.com/pytest-dev/pytest)**: A framework for structuring and running tests.
-* **[Allure Report](https://github.com/allure-framework/allure2)**: For creating interactive and detailed test reports.
+* **[`Allure Report`](https://github.com/allure-framework/allure2)**: For creating interactive and detailed test reports.
 
 ![Allure Report Overview](media/allure-report-overview.png)
 

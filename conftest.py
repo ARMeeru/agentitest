@@ -13,27 +13,33 @@ from browser_use.utils import get_browser_use_version
 from dotenv import load_dotenv
 from playwright.sync_api import sync_playwright
 
+from core.retry import (
+    LLMProvider,
+    CircuitBreakerOpenException,
+    LLMAPIException,
+    with_llm_retry,
+    get_correlation_id,
+    get_circuit_breaker_status,
+    retry_manager
+)
+
 # Load environment variables from .env file
 load_dotenv()
 
 
 def create_llm_instance():
-    """
-    Factory function to create the appropriate LLM instance based on environment configuration.
-
-    Reads the LLM_PROVIDER environment variable to determine which provider to use.
-    Supported values: "gemini", "openai", "anthropic", "azure", "groq"
-
-    Returns:
-        An instance of the appropriate LLM provider
-
-    Raises:
-        ValueError: If LLM_PROVIDER contains an unsupported value or required API keys are missing
-        ImportError: If the required provider module is not available
-        EnvironmentError: If configuration issues are detected
-    """
+    # Factory function to create the appropriate LLM instance based on environment configuration
+    # Integrates circuit breaker pattern to prevent cascade failures after consecutive LLM provider failures
+    # Reads the LLM_PROVIDER environment variable to determine which provider to use
+    # Supported values: "gemini", "openai", "anthropic", "azure", "groq"
+    # Returns: An instance of the appropriate LLM provider
+    # Raises: ValueError, ImportError, EnvironmentError, CircuitBreakerOpenException
     # Get the provider from environment, validate it's not empty
     provider = os.getenv("LLM_PROVIDER", "gemini").lower().strip()
+
+    # Check circuit breaker before attempting to create instance
+    if not retry_manager.check_circuit_breaker(provider):
+        raise CircuitBreakerOpenException(provider)
 
     if not provider:
         raise ValueError(
@@ -83,7 +89,13 @@ def create_llm_instance():
                     "Please check your API key configuration."
                 )
 
-            return ChatGoogle(model=model_name, api_key=api_key)
+            try:
+                llm_instance = ChatGoogle(model=model_name, api_key=api_key)
+                retry_manager.record_success(provider)
+                return llm_instance
+            except Exception as e:
+                retry_manager.record_failure(provider, e)
+                raise LLMAPIException(provider, f"Failed to create Gemini instance: {str(e)}") from e
 
         elif provider == "openai":
             # Try to import the required module
@@ -115,7 +127,7 @@ def create_llm_instance():
                     "OpenAI API keys must start with 'sk-'. "
                     "Please check your API key configuration."
                 )
-            
+
             if len(api_key) < 45 or len(api_key) > 60:
                 raise ValueError(
                     "OPENAI_API_KEY appears to be invalid (incorrect length). "
@@ -123,7 +135,13 @@ def create_llm_instance():
                     "Please check your API key configuration."
                 )
 
-            return ChatOpenAI(model=model_name, api_key=api_key)
+            try:
+                llm_instance = ChatOpenAI(model=model_name, api_key=api_key)
+                retry_manager.record_success(provider)
+                return llm_instance
+            except Exception as e:
+                retry_manager.record_failure(provider, e)
+                raise LLMAPIException(provider, f"Failed to create OpenAI instance: {str(e)}") from e
 
         elif provider == "anthropic":
             # Try to import the required module
@@ -155,7 +173,7 @@ def create_llm_instance():
                     "Anthropic API keys must start with 'sk-ant-'. "
                     "Please check your API key configuration."
                 )
-            
+
             if len(api_key) < 100 or len(api_key) > 120:
                 raise ValueError(
                     "ANTHROPIC_API_KEY appears to be invalid (incorrect length). "
@@ -163,7 +181,13 @@ def create_llm_instance():
                     "Please check your API key configuration."
                 )
 
-            return ChatAnthropic(model=model_name, api_key=api_key)
+            try:
+                llm_instance = ChatAnthropic(model=model_name, api_key=api_key)
+                retry_manager.record_success(provider)
+                return llm_instance
+            except Exception as e:
+                retry_manager.record_failure(provider, e)
+                raise LLMAPIException(provider, f"Failed to create Anthropic instance: {str(e)}") from e
 
         elif provider == "azure":
             # Try to import the required module
@@ -190,7 +214,7 @@ def create_llm_instance():
                     "Please set a valid API key in your .env file or environment variables. "
                     "You can get an API key from your Azure portal."
                 )
-            
+
             # Validate API key format (Azure keys are typically 32 hex characters)
             if len(api_key) < 30 or len(api_key) > 40:
                 raise ValueError(
@@ -213,13 +237,19 @@ def create_llm_instance():
                     "Please configure your deployment name or model name."
                 )
 
-            return ChatAzureOpenAI(
-                model=model_name,
-                api_key=api_key,
-                azure_endpoint=endpoint,
-                azure_deployment=deployment,
-                api_version=api_version
-            )
+            try:
+                llm_instance = ChatAzureOpenAI(
+                    model=model_name,
+                    api_key=api_key,
+                    azure_endpoint=endpoint,
+                    azure_deployment=deployment,
+                    api_version=api_version
+                )
+                retry_manager.record_success(provider)
+                return llm_instance
+            except Exception as e:
+                retry_manager.record_failure(provider, e)
+                raise LLMAPIException(provider, f"Failed to create Azure OpenAI instance: {str(e)}") from e
 
         elif provider == "groq":
             # Try to import the required module
@@ -251,7 +281,7 @@ def create_llm_instance():
                     "Groq API keys must start with 'gsk_'. "
                     "Please check your API key configuration."
                 )
-            
+
             if len(api_key) < 50 or len(api_key) > 65:
                 raise ValueError(
                     "GROQ_API_KEY appears to be invalid (incorrect length). "
@@ -259,7 +289,13 @@ def create_llm_instance():
                     "Please check your API key configuration."
                 )
 
-            return ChatGroq(model=model_name, api_key=api_key)
+            try:
+                llm_instance = ChatGroq(model=model_name, api_key=api_key)
+                retry_manager.record_success(provider)
+                return llm_instance
+            except Exception as e:
+                retry_manager.record_failure(provider, e)
+                raise LLMAPIException(provider, f"Failed to create Groq instance: {str(e)}") from e
 
     except Exception as e:
         # If it's already one of our custom errors, re-raise it
@@ -274,9 +310,7 @@ def create_llm_instance():
 
 @pytest.fixture(scope="session")
 def browser_version_info(browser_profile: BrowserProfile) -> Dict[str, str]:
-    """
-    Fixture to get Playwright and browser version info.
-    """
+    # Fixture to get Playwright and browser version info
     try:
         playwright_version = version("playwright")
         with sync_playwright() as p:
@@ -305,11 +339,9 @@ def environment_reporter(
     browser_profile: BrowserProfile,
     browser_version_info: Dict[str, str],
 ):
-    """
-    Fixture to write environment details to a properties file for reporting.
-    This runs once per session and is automatically used.
-    By default, this creates `environment.properties` for Allure.
-    """
+    # Fixture to write environment details to a properties file for reporting
+    # This runs once per session and is automatically used
+    # By default, this creates environment.properties for Allure
     allure_dir = request.config.getoption("--alluredir")
     if not allure_dir or not isinstance(allure_dir, str):
         return
@@ -355,10 +387,8 @@ def environment_reporter(
 
 @pytest.fixture(scope="session")
 def llm():
-    """Session-scoped fixture to initialize the language model using the factory function.
-
-    This fixture will fail early with clear error messages if there are configuration issues.
-    """
+    # Session-scoped fixture to initialize the language model using the factory function
+    # This fixture will fail early with clear error messages if there are configuration issues
     try:
         return create_llm_instance()
     except (ValueError, ImportError, EnvironmentError) as e:
@@ -373,7 +403,7 @@ def llm():
 
 @pytest.fixture(scope="session")
 def browser_profile() -> BrowserProfile:
-    """Session-scoped fixture for browser profile configuration."""
+    # Session-scoped fixture for browser profile configuration
     headless_mode = os.getenv("HEADLESS", "True").lower() in ("true", "1", "t")
     return BrowserProfile(headless=headless_mode)
 
@@ -382,7 +412,7 @@ def browser_profile() -> BrowserProfile:
 async def browser_session(
     browser_profile: BrowserProfile,
 ) -> AsyncGenerator[BrowserSession, None]:
-    """Function-scoped fixture to manage the browser session's lifecycle."""
+    # Function-scoped fixture to manage the browser session's lifecycle
     session = BrowserSession(browser_profile=browser_profile)
     yield session
     await session.close()
@@ -392,7 +422,7 @@ async def browser_session(
 
 
 class BaseAgentTest:
-    """Base class for agent-based tests to reduce boilerplate."""
+    # Base class for agent-based tests to reduce boilerplate
 
     BASE_URL = "https://discuss.google.dev/"
 
@@ -404,19 +434,9 @@ class BaseAgentTest:
         expected_substring: Optional[str] = None,
         ignore_case: bool = False,
     ) -> str:
-        """
-        Runs a task with the agent, prepends the BASE_URL, and performs common assertions.
-
-        Args:
-            llm: The language model instance.
-            browser_session: The browser session instance.
-            task_instruction: The specific instruction for the agent, without the "Go to URL" part.
-            expected_substring: An optional string to assert is present in the agent's result.
-            ignore_case: If True, the substring check will be case-insensitive.
-
-        Returns:
-            The final text result from the agent for any further custom assertions.
-        """
+        # Runs a task with the agent, prepends the BASE_URL, and performs common assertions
+        # Args: llm, browser_session, task_instruction, expected_substring, ignore_case
+        # Returns: The final text result from the agent for further custom assertions
         full_task = f"Go to {self.BASE_URL}, then {task_instruction}"
 
         result_text = await run_agent_task(full_task, llm, browser_session)
@@ -439,7 +459,7 @@ class BaseAgentTest:
 
 
 async def record_step(agent: Agent):
-    """Hook function that captures and records agent activity at each step."""
+    # Hook function that captures and records agent activity at each step
     history = agent.state.history
     if not history:
         return
@@ -505,24 +525,87 @@ async def run_agent_task(
     llm,
     browser_session: BrowserSession,
 ) -> Optional[str]:
-    """Initializes and runs the browser agent for a given task using an active browser session."""
-    logging.info(f"Running task: {task_description}")
+    # Initializes and runs the browser agent for a given task using an active browser session
+    # Implements retry logic with correlation ID tracking for better debugging and monitoring
+    correlation_id = get_correlation_id()
 
-    agent = Agent(
-        task=task_description,
-        llm=llm,
-        browser_session=browser_session,
-        name=f"Agent for '{task_description[:50]}...'",
-    )
+    logging.info(f"Running task: {task_description} [correlation_id: {correlation_id}]")
 
-    result = await agent.run(on_step_end=record_step)
+    # Determine provider for retry logic
+    provider_name = getattr(llm, 'provider', 'unknown')
+    if provider_name == 'google':
+        provider_name = 'gemini'  # Map google to gemini for consistency
 
-    final_text = result.final_result()
-    allure.attach(
-        final_text,
-        name="Agent Final Output",
-        attachment_type=allure.attachment_type.TEXT,
-    )
+    try:
+        provider_enum = LLMProvider(provider_name)
+    except ValueError:
+        logging.warning(f"Unknown provider {provider_name}, using default retry behavior")
+        provider_enum = LLMProvider.GEMINI  # Default fallback
 
-    logging.info("Task finished.")
-    return final_text
+    # Wrap agent execution with retry logic
+    @with_llm_retry(provider_enum, correlation_id)
+    async def execute_agent():
+        try:
+            agent = Agent(
+                task=task_description,
+                llm=llm,
+                browser_session=browser_session,
+                name=f"Agent for '{task_description[:50]}...'",
+            )
+
+            result = await agent.run(on_step_end=record_step)
+
+            if not result or not result.final_result():
+                raise LLMAPIException(provider_name, "Agent returned empty or invalid result")
+
+            return result
+        except Exception as e:
+            # Convert browser/agent exceptions to retryable LLM exceptions for certain cases
+            if "rate limit" in str(e).lower() or "timeout" in str(e).lower():
+                raise LLMAPIException(provider_name, f"Agent execution failed: {str(e)}") from e
+            # Re-raise non-retryable exceptions as-is
+            raise
+
+    try:
+        result = await execute_agent()
+
+        final_text = result.final_result()
+        allure.attach(
+            final_text,
+            name="Agent Final Output",
+            attachment_type=allure.attachment_type.TEXT,
+        )
+
+        # Attach correlation ID for tracking
+        allure.attach(
+            correlation_id,
+            name="Correlation ID",
+            attachment_type=allure.attachment_type.TEXT,
+        )
+
+        logging.info(f"Task finished successfully [correlation_id: {correlation_id}]")
+        return final_text
+
+    except CircuitBreakerOpenException:
+        error_msg = f"Circuit breaker is open for provider {provider_name}. Task cannot be executed."
+        logging.error(f"{error_msg} [correlation_id: {correlation_id}]")
+
+        allure.attach(
+            error_msg,
+            name="Circuit Breaker Error",
+            attachment_type=allure.attachment_type.TEXT,
+        )
+
+        raise RuntimeError(error_msg)
+
+    except LLMAPIException as e:
+        error_msg = f"LLM API error after retries: {str(e)}"
+        logging.error(f"{error_msg} [correlation_id: {correlation_id}]")
+
+        allure.attach(
+            f"{error_msg}\nCorrelation ID: {correlation_id}",
+            name="LLM API Error Details",
+            attachment_type=allure.attachment_type.TEXT,
+        )
+
+        raise RuntimeError(error_msg) from e
