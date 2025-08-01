@@ -23,8 +23,22 @@ from core.retry import (
     retry_manager
 )
 
+# Import enhanced error handling
+from exceptions import (
+    ConfigurationError,
+    LLMProviderError,
+    BrowserSessionError,
+    ValidationError,
+    create_error_context,
+    log_error_with_context,
+    configure_error_logging
+)
+
 # Load environment variables from .env file
 load_dotenv()
+
+# Configure structured error logging
+configure_error_logging(level="INFO", format_type="json")
 
 
 def create_llm_instance():
@@ -42,19 +56,29 @@ def create_llm_instance():
         raise CircuitBreakerOpenException(provider)
 
     if not provider:
-        raise ValueError(
-            "LLM_PROVIDER environment variable is empty. "
-            "Please set it to one of: 'gemini', 'openai', 'anthropic', 'azure', 'groq'"
+        raise ConfigurationError(
+            message="LLM_PROVIDER environment variable is empty",
+            config_key="LLM_PROVIDER",
+            expected_format="One of: 'gemini', 'openai', 'anthropic', 'azure', 'groq'",
+            error_context=create_error_context(
+                component="LLM Configuration",
+                operation="provider_validation"
+            )
         )
 
     # Define supported providers for better error messages
     supported_providers = ["gemini", "openai", "anthropic", "azure", "groq"]
 
     if provider not in supported_providers:
-        raise ValueError(
-            f"Invalid LLM_PROVIDER: '{provider}'. "
-            f"Supported values are: {', '.join(supported_providers)}. "
-            "Please check your .env file or environment variables."
+        raise ConfigurationError(
+            message=f"Invalid LLM_PROVIDER: '{provider}'",
+            config_key="LLM_PROVIDER",
+            expected_format=f"One of: {', '.join(supported_providers)}",
+            error_context=create_error_context(
+                component="LLM Configuration",
+                operation="provider_validation",
+                metadata={"provided_value": provider, "supported_providers": supported_providers}
+            )
         )
 
     try:
@@ -63,11 +87,16 @@ def create_llm_instance():
             try:
                 from browser_use.llm import ChatGoogle
             except ImportError as e:
-                raise ImportError(
-                    f"Failed to import ChatGoogle for Gemini provider. "
-                    f"Please ensure browser_use[gemini] is installed. "
-                    f"You can install it with: pip install browser_use[gemini]\n"
-                    f"Original error: {str(e)}"
+                raise ConfigurationError(
+                    message="Failed to import ChatGoogle for Gemini provider",
+                    config_key="GEMINI_DEPENDENCIES",
+                    expected_format="pip install browser_use[gemini]",
+                    error_context=create_error_context(
+                        component="LLM Configuration",
+                        operation="import_validation",
+                        provider="gemini"
+                    ),
+                    cause=e
                 )
 
             model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-pro")
@@ -75,18 +104,30 @@ def create_llm_instance():
 
             # Validate API key
             if not api_key or api_key == "YOUR_API_KEY":
-                raise ValueError(
-                    "GOOGLE_API_KEY is not properly configured for Gemini provider. "
-                    "Please set a valid API key in your .env file or environment variables. "
-                    "You can get an API key from: https://makersuite.google.com/app/apikey"
+                raise ConfigurationError(
+                    message="GOOGLE_API_KEY is not properly configured for Gemini provider",
+                    config_key="GOOGLE_API_KEY",
+                    expected_format="Valid API key from Google AI Studio",
+                    error_context=create_error_context(
+                        component="LLM Configuration",
+                        operation="api_key_validation",
+                        provider="gemini",
+                        metadata={"help_url": "https://makersuite.google.com/app/apikey"}
+                    )
                 )
 
             # Validate API key format (Gemini keys are typically 39-40 characters)
             if len(api_key) < 30 or len(api_key) > 50:
-                raise ValueError(
-                    "GOOGLE_API_KEY appears to be invalid (incorrect length). "
-                    "Gemini API keys are typically 39-40 characters long. "
-                    "Please check your API key configuration."
+                raise ConfigurationError(
+                    message="GOOGLE_API_KEY appears to have invalid format",
+                    config_key="GOOGLE_API_KEY",
+                    expected_format="39-40 character API key",
+                    error_context=create_error_context(
+                        component="LLM Configuration",
+                        operation="api_key_format_validation",
+                        provider="gemini",
+                        metadata={"key_length": len(api_key), "expected_length_range": "39-40"}
+                    )
                 )
 
             try:
@@ -95,7 +136,19 @@ def create_llm_instance():
                 return llm_instance
             except Exception as e:
                 retry_manager.record_failure(provider, e)
-                raise LLMAPIException(provider, f"Failed to create Gemini instance: {str(e)}") from e
+                context = create_error_context(
+                    component="LLM Provider",
+                    operation="instance_creation",
+                    provider=provider
+                )
+                llm_error = LLMProviderError(
+                    message=f"Failed to create Gemini instance: {str(e)}",
+                    provider=provider,
+                    error_context=context,
+                    cause=e
+                )
+                log_error_with_context(llm_error, context)
+                raise llm_error
 
         elif provider == "openai":
             # Try to import the required module
@@ -114,25 +167,42 @@ def create_llm_instance():
 
             # Validate API key
             if not api_key or api_key == "YOUR_API_KEY":
-                raise ValueError(
-                    "OPENAI_API_KEY is not properly configured for OpenAI provider. "
-                    "Please set a valid API key in your .env file or environment variables. "
-                    "You can get an API key from: https://platform.openai.com/api-keys"
+                raise ConfigurationError(
+                    message="OPENAI_API_KEY is not properly configured for OpenAI provider",
+                    config_key="OPENAI_API_KEY",
+                    expected_format="Valid API key from OpenAI Platform",
+                    error_context=create_error_context(
+                        component="LLM Configuration",
+                        operation="api_key_validation",
+                        provider="openai",
+                        metadata={"help_url": "https://platform.openai.com/api-keys"}
+                    )
                 )
 
             # Validate API key format (OpenAI keys start with 'sk-' and are ~51 characters)
             if not api_key.startswith("sk-"):
-                raise ValueError(
-                    "OPENAI_API_KEY appears to be invalid. "
-                    "OpenAI API keys must start with 'sk-'. "
-                    "Please check your API key configuration."
+                raise ConfigurationError(
+                    message="OPENAI_API_KEY appears to have invalid format",
+                    config_key="OPENAI_API_KEY",
+                    expected_format="API key starting with 'sk-'",
+                    error_context=create_error_context(
+                        component="LLM Configuration",
+                        operation="api_key_format_validation",
+                        provider="openai"
+                    )
                 )
 
             if len(api_key) < 45 or len(api_key) > 60:
-                raise ValueError(
-                    "OPENAI_API_KEY appears to be invalid (incorrect length). "
-                    "OpenAI API keys are typically around 51 characters long. "
-                    "Please check your API key configuration."
+                raise ConfigurationError(
+                    message="OPENAI_API_KEY appears to have invalid length",
+                    config_key="OPENAI_API_KEY",
+                    expected_format="~51 character API key",
+                    error_context=create_error_context(
+                        component="LLM Configuration",
+                        operation="api_key_length_validation",
+                        provider="openai",
+                        metadata={"key_length": len(api_key), "expected_length_range": "45-60"}
+                    )
                 )
 
             try:
@@ -160,18 +230,29 @@ def create_llm_instance():
 
             # Validate API key
             if not api_key or api_key == "YOUR_API_KEY":
-                raise ValueError(
-                    "ANTHROPIC_API_KEY is not properly configured for Anthropic provider. "
-                    "Please set a valid API key in your .env file or environment variables. "
-                    "You can get an API key from: https://console.anthropic.com/account/keys"
+                raise ConfigurationError(
+                    message="ANTHROPIC_API_KEY is not properly configured for Anthropic provider",
+                    config_key="ANTHROPIC_API_KEY",
+                    expected_format="Valid API key from Anthropic Console",
+                    error_context=create_error_context(
+                        component="LLM Configuration",
+                        operation="api_key_validation",
+                        provider="anthropic",
+                        metadata={"help_url": "https://console.anthropic.com/account/keys"}
+                    )
                 )
 
             # Validate API key format (Anthropic keys start with 'sk-ant-' and are ~108 characters)
             if not api_key.startswith("sk-ant-"):
-                raise ValueError(
-                    "ANTHROPIC_API_KEY appears to be invalid. "
-                    "Anthropic API keys must start with 'sk-ant-'. "
-                    "Please check your API key configuration."
+                raise ConfigurationError(
+                    message="ANTHROPIC_API_KEY appears to have invalid format",
+                    config_key="ANTHROPIC_API_KEY",
+                    expected_format="API key starting with 'sk-ant-'",
+                    error_context=create_error_context(
+                        component="LLM Configuration",
+                        operation="api_key_format_validation",
+                        provider="anthropic"
+                    )
                 )
 
             if len(api_key) < 100 or len(api_key) > 120:
@@ -209,10 +290,16 @@ def create_llm_instance():
 
             # Validate required parameters
             if not api_key or api_key == "YOUR_API_KEY":
-                raise ValueError(
-                    "AZURE_API_KEY is not properly configured for Azure provider. "
-                    "Please set a valid API key in your .env file or environment variables. "
-                    "You can get an API key from your Azure portal."
+                raise ConfigurationError(
+                    message="AZURE_API_KEY is not properly configured for Azure provider",
+                    config_key="AZURE_API_KEY",
+                    expected_format="Valid API key from Azure Portal",
+                    error_context=create_error_context(
+                        component="LLM Configuration",
+                        operation="api_key_validation",
+                        provider="azure",
+                        metadata={"help_url": "https://portal.azure.com"}
+                    )
                 )
 
             # Validate API key format (Azure keys are typically 32 hex characters)
@@ -224,10 +311,15 @@ def create_llm_instance():
                 )
 
             if not endpoint:
-                raise ValueError(
-                    "AZURE_ENDPOINT is required for Azure provider. "
-                    "Please set your Azure OpenAI endpoint URL in your .env file. "
-                    "Example: https://your-resource.openai.azure.com/"
+                raise ConfigurationError(
+                    message="AZURE_ENDPOINT is required for Azure provider",
+                    config_key="AZURE_ENDPOINT",
+                    expected_format="https://your-resource.openai.azure.com/",
+                    error_context=create_error_context(
+                        component="LLM Configuration",
+                        operation="endpoint_validation",
+                        provider="azure"
+                    )
                 )
 
             # Azure can use either deployment name or model name
@@ -268,18 +360,29 @@ def create_llm_instance():
 
             # Validate API key
             if not api_key or api_key == "YOUR_API_KEY":
-                raise ValueError(
-                    "GROQ_API_KEY is not properly configured for Groq provider. "
-                    "Please set a valid API key in your .env file or environment variables. "
-                    "You can get an API key from: https://console.groq.com/keys"
+                raise ConfigurationError(
+                    message="GROQ_API_KEY is not properly configured for Groq provider",
+                    config_key="GROQ_API_KEY",
+                    expected_format="Valid API key from Groq Console",
+                    error_context=create_error_context(
+                        component="LLM Configuration",
+                        operation="api_key_validation",
+                        provider="groq",
+                        metadata={"help_url": "https://console.groq.com/keys"}
+                    )
                 )
 
             # Validate API key format (Groq keys start with 'gsk_' and are ~56 characters)
             if not api_key.startswith("gsk_"):
-                raise ValueError(
-                    "GROQ_API_KEY appears to be invalid. "
-                    "Groq API keys must start with 'gsk_'. "
-                    "Please check your API key configuration."
+                raise ConfigurationError(
+                    message="GROQ_API_KEY appears to have invalid format",
+                    config_key="GROQ_API_KEY",
+                    expected_format="API key starting with 'gsk_'",
+                    error_context=create_error_context(
+                        component="LLM Configuration",
+                        operation="api_key_format_validation",
+                        provider="groq"
+                    )
                 )
 
             if len(api_key) < 50 or len(api_key) > 65:
@@ -298,14 +401,32 @@ def create_llm_instance():
                 raise LLMAPIException(provider, f"Failed to create Groq instance: {str(e)}") from e
 
     except Exception as e:
-        # If it's already one of our custom errors, re-raise it
-        if isinstance(e, (ValueError, ImportError, EnvironmentError)):
+        # If it's already one of our custom framework errors, re-raise it
+        if isinstance(e, (ConfigurationError, LLMProviderError)):
             raise
+        # If it's a standard error type, convert to framework error
+        elif isinstance(e, (ValueError, ImportError, EnvironmentError)):
+            raise ConfigurationError(
+                message=f"Failed to initialize {provider} LLM provider: {str(e)}",
+                config_key=f"{provider.upper()}_CONFIGURATION",
+                error_context=create_error_context(
+                    component="LLM Configuration",
+                    operation="provider_initialization",
+                    provider=provider
+                ),
+                cause=e
+            )
         # Otherwise, wrap it with more context
-        raise EnvironmentError(
-            f"Failed to initialize {provider} LLM provider. "
-            f"Error: {str(e)}"
-        )
+        else:
+            raise ConfigurationError(
+                message=f"Unexpected error initializing {provider} LLM provider: {str(e)}",
+                error_context=create_error_context(
+                    component="LLM Configuration",
+                    operation="provider_initialization",
+                    provider=provider
+                ),
+                cause=e
+            )
 
 
 @pytest.fixture(scope="session")
@@ -391,12 +512,23 @@ def llm():
     # This fixture will fail early with clear error messages if there are configuration issues
     try:
         return create_llm_instance()
-    except (ValueError, ImportError, EnvironmentError) as e:
-        # Log the error for better visibility
-        logging.error(f"Failed to initialize LLM: {str(e)}")
+    except (ConfigurationError, LLMProviderError) as e:
+        # Log the error with structured logging
+        correlation_id = log_error_with_context(e, e.error_context, level="error")
         # Re-raise to fail the test session with clear error
         raise pytest.UsageError(
-            f"\n\nLLM Configuration Error:\n{str(e)}\n\n"
+            f"\n\nLLM Configuration Error [correlation_id: {correlation_id}]:\n{e.get_actionable_message()}\n\n"
+            "Please check your environment configuration and try again.\n"
+        )
+    except (ValueError, ImportError, EnvironmentError) as e:
+        # Handle legacy exceptions for backward compatibility
+        context = create_error_context(
+            component="LLM Fixture",
+            operation="llm_initialization"
+        )
+        correlation_id = log_error_with_context(e, context, level="error")
+        raise pytest.UsageError(
+            f"\n\nLLM Configuration Error [correlation_id: {correlation_id}]:\n{str(e)}\n\n"
             "Please check your environment configuration and try again.\n"
         )
 
@@ -413,9 +545,36 @@ async def browser_session(
     browser_profile: BrowserProfile,
 ) -> AsyncGenerator[BrowserSession, None]:
     # Function-scoped fixture to manage the browser session's lifecycle
-    session = BrowserSession(browser_profile=browser_profile)
-    yield session
-    await session.close()
+    session = None
+    try:
+        session = BrowserSession(browser_profile=browser_profile)
+        yield session
+    except Exception as e:
+        # Convert browser session errors to framework exceptions
+        context = create_error_context(
+            component="Browser Session",
+            operation="session_creation",
+            metadata={"browser_type": browser_profile.channel.value if browser_profile.channel else "chromium"}
+        )
+        browser_error = BrowserSessionError(
+            message=f"Failed to create browser session: {str(e)}",
+            browser_type=browser_profile.channel.value if browser_profile.channel else "chromium",
+            error_context=context,
+            cause=e
+        )
+        log_error_with_context(browser_error, context)
+        raise browser_error
+    finally:
+        if session:
+            try:
+                await session.close()
+            except Exception as e:
+                # Log session cleanup errors but don't fail the test
+                context = create_error_context(
+                    component="Browser Session",
+                    operation="session_cleanup"
+                )
+                log_error_with_context(e, context, level="warning")
 
 
 # --- Base Test Class for Agent-based Tests ---
@@ -441,16 +600,40 @@ class BaseAgentTest:
 
         result_text = await run_agent_task(full_task, llm, browser_session)
 
-        assert result_text is not None, "Agent did not return a final result."
+        if result_text is None:
+            raise ValidationError(
+                message="Agent did not return a final result",
+                validation_type="result_presence",
+                expected_value="non-null result",
+                actual_value="null",
+                error_context=create_error_context(
+                    component="Agent Validation",
+                    operation="result_validation"
+                )
+            )
 
         if expected_substring:
             result_to_check = result_text.lower() if ignore_case else result_text
             substring_to_check = (
                 expected_substring.lower() if ignore_case else expected_substring
             )
-            assert (
-                substring_to_check in result_to_check
-            ), f"Assertion failed: Expected '{expected_substring}' not found in agent result: '{result_text}'"
+
+            if substring_to_check not in result_to_check:
+                raise ValidationError(
+                    message=f"Expected substring not found in agent result",
+                    validation_type="substring_match",
+                    expected_value=expected_substring,
+                    actual_value=result_text,
+                    error_context=create_error_context(
+                        component="Agent Validation",
+                        operation="substring_validation",
+                        metadata={
+                            "ignore_case": ignore_case,
+                            "substring_to_check": substring_to_check,
+                            "result_to_check_length": len(result_to_check)
+                        }
+                    )
+                )
 
         return result_text
 
@@ -562,7 +745,19 @@ async def run_agent_task(
         except Exception as e:
             # Convert browser/agent exceptions to retryable LLM exceptions for certain cases
             if "rate limit" in str(e).lower() or "timeout" in str(e).lower():
-                raise LLMAPIException(provider_name, f"Agent execution failed: {str(e)}") from e
+                context = create_error_context(
+                    correlation_id=correlation_id,
+                    component="Agent Execution",
+                    operation="agent_run",
+                    provider=provider_name
+                )
+                llm_error = LLMProviderError(
+                    message=f"Agent execution failed: {str(e)}",
+                    provider=provider_name,
+                    error_context=context,
+                    cause=e
+                )
+                raise llm_error from e
             # Re-raise non-retryable exceptions as-is
             raise
 
@@ -586,24 +781,46 @@ async def run_agent_task(
         logging.info(f"Task finished successfully [correlation_id: {correlation_id}]")
         return final_text
 
-    except CircuitBreakerOpenException:
+    except CircuitBreakerOpenException as e:
         error_msg = f"Circuit breaker is open for provider {provider_name}. Task cannot be executed."
-        logging.error(f"{error_msg} [correlation_id: {correlation_id}]")
+        context = create_error_context(
+            correlation_id=correlation_id,
+            component="Agent Execution",
+            operation="circuit_breaker_check",
+            provider=provider_name
+        )
+
+        log_error_with_context(e, context, level="error")
 
         allure.attach(
-            error_msg,
+            e.get_actionable_message(),
             name="Circuit Breaker Error",
             attachment_type=allure.attachment_type.TEXT,
         )
 
-        raise RuntimeError(error_msg)
+        raise RuntimeError(error_msg) from e
 
-    except LLMAPIException as e:
+    except (LLMAPIException, LLMProviderError) as e:
         error_msg = f"LLM API error after retries: {str(e)}"
-        logging.error(f"{error_msg} [correlation_id: {correlation_id}]")
 
+        # Ensure we have error context
+        if hasattr(e, 'error_context') and e.error_context:
+            context = e.error_context
+            context.correlation_id = correlation_id  # Ensure correlation ID is set
+        else:
+            context = create_error_context(
+                correlation_id=correlation_id,
+                component="Agent Execution",
+                operation="llm_api_call",
+                provider=provider_name
+            )
+
+        log_error_with_context(e, context, level="error")
+
+        # Attach comprehensive error details to Allure report
+        error_details = e.get_actionable_message() if hasattr(e, 'get_actionable_message') else str(e)
         allure.attach(
-            f"{error_msg}\nCorrelation ID: {correlation_id}",
+            f"{error_details}\nCorrelation ID: {correlation_id}",
             name="LLM API Error Details",
             attachment_type=allure.attachment_type.TEXT,
         )

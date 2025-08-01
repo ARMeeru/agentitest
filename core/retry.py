@@ -17,6 +17,16 @@ from tenacity import (
     AttemptManager
 )
 
+# Import new exception hierarchy
+from exceptions import (
+    LLMProviderError,
+    ErrorContext,
+    create_error_context,
+    log_error_with_context,
+    handle_llm_provider_failure,
+    register_llm_providers
+)
+
 
 logger = logging.getLogger(__name__)
 
@@ -52,23 +62,37 @@ class CircuitBreakerState:
 
 
 class RetryableException(Exception):
-    # Base class for exceptions that should trigger retries
+    # Base class for exceptions that should trigger retries (kept for backward compatibility)
     pass
 
 
-class LLMAPIException(RetryableException):
-    # Exception for LLM API failures that should be retried
+class LLMAPIException(LLMProviderError):
+    # Legacy exception for backward compatibility - now inherits from LLMProviderError
     def __init__(self, provider: str, message: str, status_code: Optional[int] = None):
-        self.provider = provider
-        self.status_code = status_code
-        super().__init__(f"LLM API Error ({provider}): {message}")
+        super().__init__(
+            message=message,
+            provider=provider,
+            status_code=status_code,
+            error_context=create_error_context(
+                component="LLM API",
+                operation="api_call",
+                provider=provider
+            )
+        )
 
 
-class CircuitBreakerOpenException(Exception):
-    # Exception raised when circuit breaker is open
+class CircuitBreakerOpenException(LLMProviderError):
+    # Exception raised when circuit breaker is open - now uses framework exception
     def __init__(self, provider: str):
-        self.provider = provider
-        super().__init__(f"Circuit breaker is open for provider: {provider}")
+        super().__init__(
+            message=f"Circuit breaker is open for provider: {provider}",
+            provider=provider,
+            error_context=create_error_context(
+                component="Circuit Breaker",
+                operation="circuit_breaker_check",
+                provider=provider
+            )
+        )
 
 
 class RetryManager:
@@ -86,6 +110,10 @@ class RetryManager:
     def __init__(self):
         self.configs = self.DEFAULT_CONFIGS.copy()
         self.circuit_breakers: Dict[str, CircuitBreakerState] = defaultdict(CircuitBreakerState)
+        
+        # Register providers with graceful degradation manager
+        provider_names = [provider.value for provider in self.DEFAULT_CONFIGS.keys()]
+        register_llm_providers(provider_names)
 
     def get_config(self, provider: LLMProvider) -> RetryConfig:
         # Get retry configuration for a provider
@@ -117,8 +145,22 @@ class RetryManager:
         breaker = self.circuit_breakers[provider_name]
         if breaker.failure_count > 0:
             logger.info(f"Resetting failure count for {provider_name} after successful operation")
+            
+            # Log circuit breaker recovery
+            if breaker.is_open:
+                from exceptions.logging import log_circuit_breaker_event
+                log_circuit_breaker_event(
+                    provider=provider_name,
+                    event_type="closed",
+                    failure_count=0
+                )
+            
             breaker.failure_count = 0
             breaker.is_open = False
+            
+            # Reset provider status in degradation manager
+            from exceptions.graceful_degradation import reset_provider_status
+            reset_provider_status(provider_name)
 
     def record_failure(self, provider_name: str, exception: Exception):
         # Record failure and potentially open circuit breaker
@@ -133,10 +175,30 @@ class RetryManager:
             'type': type(exception).__name__
         })
 
+        # Log failure with structured error logging
+        context = create_error_context(
+            component="Circuit Breaker",
+            operation="record_failure",
+            provider=provider_name,
+            retry_count=breaker.failure_count
+        )
+        log_error_with_context(exception, context, level="warning")
+
+        # Handle graceful degradation
+        degradation_result = handle_llm_provider_failure(provider_name, exception, context)
+        
         config = self.get_config(LLMProvider(provider_name))
         if breaker.failure_count >= config.circuit_breaker_threshold:
             breaker.is_open = True
             logger.error(f"Circuit breaker opened for {provider_name} after {breaker.failure_count} failures")
+            
+            # Log circuit breaker event
+            from exceptions.logging import log_circuit_breaker_event
+            log_circuit_breaker_event(
+                provider=provider_name,
+                event_type="opened",
+                failure_count=breaker.failure_count
+            )
 
     def create_retry_decorator(self, provider: LLMProvider, correlation_id: Optional[str] = None):
         # Create a retry decorator with provider-specific configuration
@@ -162,13 +224,35 @@ class RetryManager:
             if retry_state.outcome and retry_state.outcome.failed:
                 exception = retry_state.outcome.exception()
                 self.record_failure(provider_name, exception)
+                
+                # Log retry attempt with correlation ID
+                from exceptions.logging import log_recovery_attempt
+                log_recovery_attempt(
+                    correlation_id=correlation_id or "unknown",
+                    strategy="retry_with_backoff",
+                    attempt_number=retry_state.attempt_number,
+                    success=False,
+                    provider=provider_name,
+                    exception=str(exception)
+                )
             else:
                 self.record_success(provider_name)
+                
+                # Log successful retry recovery
+                if retry_state.attempt_number > 1:
+                    from exceptions.logging import log_recovery_attempt
+                    log_recovery_attempt(
+                        correlation_id=correlation_id or "unknown",
+                        strategy="retry_with_backoff",
+                        attempt_number=retry_state.attempt_number,
+                        success=True,
+                        provider=provider_name
+                    )
 
         return retry(
             stop=stop_after_attempt(config.max_attempts),
             wait=jitter_wait,
-            retry=retry_if_exception_type((LLMAPIException, RetryableException)),
+            retry=retry_if_exception_type((LLMAPIException, LLMProviderError, RetryableException)),
             before_sleep=before_sleep,
             after=after_attempt,
             reraise=True
@@ -199,10 +283,27 @@ def with_llm_retry(provider: LLMProvider, correlation_id: Optional[str] = None):
                 # Log final failure with correlation ID
                 correlation_msg = f" [correlation_id: {correlation_id}]" if correlation_id else ""
                 logger.error(f"All retry attempts exhausted for {provider_name}{correlation_msg}: {e}")
-                raise LLMAPIException(
+                
+                # Create comprehensive error context
+                context = create_error_context(
+                    correlation_id=correlation_id,
+                    component="Retry Manager",
+                    operation="exhausted_retries",
+                    provider=provider_name,
+                    retry_count=retry_manager.get_config(provider).max_attempts
+                )
+                
+                # Create framework exception with proper context
+                framework_exception = LLMAPIException(
                     provider_name,
                     f"Failed after {retry_manager.get_config(provider).max_attempts} attempts"
-                ) from e
+                )
+                framework_exception.error_context = context
+                
+                # Log with structured logging
+                log_error_with_context(framework_exception, context, level="error")
+                
+                raise framework_exception from e
 
         return wrapper
     return decorator
