@@ -229,7 +229,7 @@ jobs:
 
       - name: Upload Security Reports
         if: always()
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: security-reports
           path: |
@@ -310,10 +310,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Dependency Review
+      - name: Dependency Review (requires GitHub Advanced Security)
         uses: actions/dependency-review-action@v3
         with:
           fail-on-severity: high
+        continue-on-error: true
 
   secrets-baseline:
     name: Update Secrets Baseline
