@@ -210,7 +210,6 @@ allure-results/
 
 # Security scanning tools
 .bandit
-.secrets.baseline
 bandit-report.json
 security-scan-results/
 
