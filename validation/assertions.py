@@ -95,7 +95,7 @@ class CustomAssertions:
             "loading_states": ["loading", "please wait", "processing", "spinner"],
             "navigation_success": ["loaded", "page", "content", "title"],
             "search_results": ["results", "found", "matches", "search", "items"],
-            "no_results": ["no results", "nothing found", "empty", "zero results"]
+            "no_results": ["no results", "no result", "nothing found", "empty", "zero results", "no_results_found"]
         }
     
     @validation_assertion

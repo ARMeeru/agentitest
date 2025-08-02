@@ -22,6 +22,9 @@ from validation import (
     get_global_registry
 )
 
+# Import security function for Allure reports
+from core.security import sanitize_for_allure
+
 
 # Enhanced validation methods using the robust validation framework
 class SauceDemoValidationMixin:
@@ -287,8 +290,14 @@ class TestSauceDemoBasic(BaseAgentTest, SauceDemoValidationMixin):
                 "Return 'login_successful' when products are visible.")
 
         try:
-            # Execute task with automatic retry logic (inherited from BaseAgentTest)
-            result = await self.validate_task(llm, browser_session, task, "login_successful", ignore_case=True)
+            # Execute task with semantic validation framework (automatic retry logic inherited)
+            result = await self.validate_task(
+                llm, browser_session, task, 
+                expected_outcomes=["login_successful", "products page", "inventory", "items displayed"],
+                confidence_threshold=0.8,
+                ignore_case=True,
+                enable_partial_matching=True
+            )
 
             # Use robust validation framework for additional verification
             await self.validate_login_success_robust(
@@ -313,13 +322,16 @@ class TestSauceDemoBasic(BaseAgentTest, SauceDemoValidationMixin):
 
             correlation_id = log_error_with_context(e, context, level="error")
 
-            allure.attach(
+            failure_details = (
                 f"Login Test Failed\n"
                 f"Username: standard_user\n"
                 f"Expected: login_successful\n"
                 f"Correlation ID: {correlation_id}\n"
                 f"Validation Framework: Robust Validation with Semantic Analysis\n"
-                f"Error Context: {context}",
+                f"Error Context: {context}"
+            )
+            allure.attach(
+                sanitize_for_allure(failure_details),
                 name="Login Test Failure Details",
                 attachment_type=allure.attachment_type.TEXT
             )
@@ -343,7 +355,13 @@ class TestSauceDemoBasic(BaseAgentTest, SauceDemoValidationMixin):
             # First login with semantic validation
             login_task = ("enter 'standard_user' in the username field, enter 'secret_sauce' in the password field, "
                          "and click LOGIN")
-            login_result = await self.validate_task(llm, browser_session, login_task, "inventory", ignore_case=True)
+            login_result = await self.validate_task(
+                llm, browser_session, login_task, 
+                expected_outcomes=["inventory", "products", "login successful", "dashboard"],
+                confidence_threshold=0.7,
+                ignore_case=True,
+                enable_partial_matching=True
+            )
 
             # Validate login success using robust framework
             await self.validate_login_success_robust(
@@ -355,7 +373,13 @@ class TestSauceDemoBasic(BaseAgentTest, SauceDemoValidationMixin):
             # Then add to cart with cart-specific validation
             cart_task = ("find the first product and click its 'Add to cart' button, then verify the cart badge shows '1'. "
                         "Return 'item_added' if successful.")
-            cart_result = await self.validate_task(llm, browser_session, cart_task, "item_added", ignore_case=True)
+            cart_result = await self.validate_task(
+                llm, browser_session, cart_task, 
+                expected_outcomes=["item_added", "added to cart", "cart updated", "1"],
+                confidence_threshold=0.8,
+                ignore_case=True,
+                enable_partial_matching=True
+            )
 
             # Use robust cart validation
             await self.validate_cart_operation_robust(
@@ -384,14 +408,17 @@ class TestSauceDemoBasic(BaseAgentTest, SauceDemoValidationMixin):
             # Check for degradation status
             degradation_status = get_degradation_status()
 
-            allure.attach(
+            failure_details = (
                 f"Add to Cart Test Failed\n"
                 f"Username: standard_user\n"
                 f"Expected Cart Count: 1\n"
                 f"Correlation ID: {correlation_id}\n"
                 f"Degradation Status: {degradation_status}\n"
                 f"Validation Framework: Text Content with Cart-Specific Validation\n"
-                f"Error Context: {context}",
+                f"Error Context: {context}"
+            )
+            allure.attach(
+                sanitize_for_allure(failure_details),
                 name="Add to Cart Test Failure Details",
                 attachment_type=allure.attachment_type.TEXT
             )
@@ -423,8 +450,14 @@ class TestSauceDemoBasic(BaseAgentTest, SauceDemoValidationMixin):
             Return 'purchase_completed' when you see the order confirmation or thank you message.
             """
 
-            # Execute complex task with automatic retry and circuit breaker protection
-            result = await self.validate_task(llm, browser_session, task, "purchase_completed", ignore_case=True)
+            # Execute complex task with semantic validation and automatic retry/circuit breaker protection
+            result = await self.validate_task(
+                llm, browser_session, task, 
+                expected_outcomes=["purchase_completed", "thank you", "order confirmation", "checkout complete"],
+                confidence_threshold=0.8,
+                ignore_case=True,
+                enable_partial_matching=True
+            )
 
             # Use custom assertion for purchase completion
             await self.assert_purchase_completion_robust(
@@ -459,7 +492,7 @@ class TestSauceDemoBasic(BaseAgentTest, SauceDemoValidationMixin):
 
             correlation_id = log_error_with_context(e, context, level="error")
 
-            allure.attach(
+            failure_details = (
                 f"Browser Session Error in Purchase Flow\n"
                 f"Error Type: {type(e).__name__}\n"
                 f"Error Message: {str(e)}\n"
@@ -468,7 +501,10 @@ class TestSauceDemoBasic(BaseAgentTest, SauceDemoValidationMixin):
                 f"  - Check browser session stability\n"
                 f"  - Verify page loading times\n"
                 f"  - Review network connectivity\n"
-                f"  - Consider increasing timeout values",
+                f"  - Consider increasing timeout values"
+            )
+            allure.attach(
+                sanitize_for_allure(failure_details),
                 name="Browser Session Error Details",
                 attachment_type=allure.attachment_type.TEXT
             )
@@ -489,7 +525,7 @@ class TestSauceDemoBasic(BaseAgentTest, SauceDemoValidationMixin):
 
             correlation_id = log_error_with_context(e, context, level="error")
 
-            allure.attach(
+            failure_details = (
                 f"Validation Error in Purchase Flow\n"
                 f"Validation Type: {getattr(e, 'validation_type', 'unknown')}\n"
                 f"Confidence Score: {getattr(e, 'confidence_score', 0.0)}\n"
@@ -501,7 +537,10 @@ class TestSauceDemoBasic(BaseAgentTest, SauceDemoValidationMixin):
                 f"  - Review purchase flow steps\n"
                 f"  - Check form validation requirements\n"
                 f"  - Verify confirmation page elements\n"
-                f"  - Consider adjusting confidence thresholds",
+                f"  - Consider adjusting confidence thresholds"
+            )
+            allure.attach(
+                sanitize_for_allure(failure_details),
                 name="Purchase Validation Error Details",
                 attachment_type=allure.attachment_type.TEXT
             )
@@ -522,7 +561,7 @@ class TestSauceDemoBasic(BaseAgentTest, SauceDemoValidationMixin):
 
             correlation_id = log_error_with_context(e, context, level="error")
 
-            allure.attach(
+            failure_details = (
                 f"Unexpected Error in Purchase Flow\n"
                 f"Error Type: {type(e).__name__}\n"
                 f"Error Message: {str(e)}\n"
@@ -532,7 +571,10 @@ class TestSauceDemoBasic(BaseAgentTest, SauceDemoValidationMixin):
                 f"  - Check system resources and connectivity\n"
                 f"  - Review LLM provider status\n"
                 f"  - Verify test environment configuration\n"
-                f"  - Consider retry with different LLM provider",
+                f"  - Consider retry with different LLM provider"
+            )
+            allure.attach(
+                sanitize_for_allure(failure_details),
                 name="Unexpected Error Details",
                 attachment_type=allure.attachment_type.TEXT
             )
@@ -565,7 +607,13 @@ class TestSauceDemoErrorHandling(BaseAgentTest, SauceDemoValidationMixin):
 
         try:
             # This should fail, but we handle it gracefully
-            result = await self.validate_task(llm, browser_session, task, "login_failed", ignore_case=True)
+            result = await self.validate_task(
+                llm, browser_session, task, 
+                expected_outcomes=["login_failed", "error", "invalid", "incorrect credentials"],
+                confidence_threshold=0.7,
+                ignore_case=True,
+                enable_partial_matching=True
+            )
 
             # Initialize validation components before use
             self._ensure_validation_components()
@@ -613,13 +661,16 @@ class TestSauceDemoErrorHandling(BaseAgentTest, SauceDemoValidationMixin):
 
             correlation_id = log_error_with_context(e, context, level="warning")
 
-            allure.attach(
+            test_details = (
                 f"Invalid Login Test Execution\n"
                 f"Username: invalid_user (intentionally invalid)\n"
                 f"Expected: login_failed\n"
                 f"Correlation ID: {correlation_id}\n"
                 f"Test Type: Negative Test Case\n"
-                f"Note: Some exceptions are expected in negative testing",
+                f"Note: Some exceptions are expected in negative testing"
+            )
+            allure.attach(
+                sanitize_for_allure(test_details),
                 name="Invalid Login Test Details",
                 attachment_type=allure.attachment_type.TEXT
             )

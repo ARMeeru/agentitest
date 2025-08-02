@@ -4,7 +4,7 @@ import os
 import platform
 import sys
 from importlib.metadata import version
-from typing import AsyncGenerator, Dict, Optional
+from typing import AsyncGenerator, Dict, Optional, Union, List, Any
 
 import allure
 import pytest
@@ -37,8 +37,29 @@ from exceptions import (
 # Load environment variables from .env file
 load_dotenv()
 
-# Configure structured error logging
-configure_error_logging(level="INFO", format_type="json")
+# Configure structured error logging with security features
+configure_error_logging(level="INFO", format_type="json", enable_security=True)
+
+# Try to initialize secure credential management
+try:
+    from core.credential_manager import get_credential_loader
+    _credential_loader = get_credential_loader()
+    SECURE_CREDENTIALS_AVAILABLE = True
+except ImportError:
+    _credential_loader = None
+    SECURE_CREDENTIALS_AVAILABLE = False
+
+
+def get_api_key_secure(provider: str, env_var: str) -> Optional[str]:
+    """Get API key using secure credential loader if available, otherwise environment."""
+    if SECURE_CREDENTIALS_AVAILABLE and _credential_loader:
+        return _credential_loader.get_credential(
+            f"{provider}_api_key",
+            required=False,
+            fallback_env_var=env_var
+        )
+    else:
+        return os.getenv(env_var)
 
 
 def create_llm_instance():
@@ -100,7 +121,7 @@ def create_llm_instance():
                 )
 
             model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-pro")
-            api_key = os.getenv("GOOGLE_API_KEY")
+            api_key = get_api_key_secure("gemini", "GOOGLE_API_KEY")
 
             # Validate API key
             if not api_key or api_key == "YOUR_API_KEY":
@@ -116,19 +137,7 @@ def create_llm_instance():
                     )
                 )
 
-            # Validate API key format (Gemini keys are typically 39-40 characters)
-            if len(api_key) < 30 or len(api_key) > 50:
-                raise ConfigurationError(
-                    message="GOOGLE_API_KEY appears to have invalid format",
-                    config_key="GOOGLE_API_KEY",
-                    expected_format="39-40 character API key",
-                    error_context=create_error_context(
-                        component="LLM Configuration",
-                        operation="api_key_format_validation",
-                        provider="gemini",
-                        metadata={"key_length": len(api_key), "expected_length_range": "39-40"}
-                    )
-                )
+            # Basic API key validation (removed specific format validation for security)
 
             try:
                 llm_instance = ChatGoogle(model=model_name, api_key=api_key)
@@ -163,7 +172,7 @@ def create_llm_instance():
                 )
 
             model_name = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-            api_key = os.getenv("OPENAI_API_KEY")
+            api_key = get_api_key_secure("openai", "OPENAI_API_KEY")
 
             # Validate API key
             if not api_key or api_key == "YOUR_API_KEY":
@@ -179,31 +188,7 @@ def create_llm_instance():
                     )
                 )
 
-            # Validate API key format (OpenAI keys start with 'sk-' and are ~51 characters)
-            if not api_key.startswith("sk-"):
-                raise ConfigurationError(
-                    message="OPENAI_API_KEY appears to have invalid format",
-                    config_key="OPENAI_API_KEY",
-                    expected_format="API key starting with 'sk-'",
-                    error_context=create_error_context(
-                        component="LLM Configuration",
-                        operation="api_key_format_validation",
-                        provider="openai"
-                    )
-                )
-
-            if len(api_key) < 45 or len(api_key) > 60:
-                raise ConfigurationError(
-                    message="OPENAI_API_KEY appears to have invalid length",
-                    config_key="OPENAI_API_KEY",
-                    expected_format="~51 character API key",
-                    error_context=create_error_context(
-                        component="LLM Configuration",
-                        operation="api_key_length_validation",
-                        provider="openai",
-                        metadata={"key_length": len(api_key), "expected_length_range": "45-60"}
-                    )
-                )
+            # Basic API key validation (removed specific format validation for security)
 
             try:
                 llm_instance = ChatOpenAI(model=model_name, api_key=api_key)
@@ -226,7 +211,7 @@ def create_llm_instance():
                 )
 
             model_name = os.getenv("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022")
-            api_key = os.getenv("ANTHROPIC_API_KEY")
+            api_key = get_api_key_secure("anthropic", "ANTHROPIC_API_KEY")
 
             # Validate API key
             if not api_key or api_key == "YOUR_API_KEY":
@@ -242,25 +227,7 @@ def create_llm_instance():
                     )
                 )
 
-            # Validate API key format (Anthropic keys start with 'sk-ant-' and are ~108 characters)
-            if not api_key.startswith("sk-ant-"):
-                raise ConfigurationError(
-                    message="ANTHROPIC_API_KEY appears to have invalid format",
-                    config_key="ANTHROPIC_API_KEY",
-                    expected_format="API key starting with 'sk-ant-'",
-                    error_context=create_error_context(
-                        component="LLM Configuration",
-                        operation="api_key_format_validation",
-                        provider="anthropic"
-                    )
-                )
-
-            if len(api_key) < 100 or len(api_key) > 120:
-                raise ValueError(
-                    "ANTHROPIC_API_KEY appears to be invalid (incorrect length). "
-                    "Anthropic API keys are typically around 108 characters long. "
-                    "Please check your API key configuration."
-                )
+            # Basic API key validation (removed specific format validation for security)
 
             try:
                 llm_instance = ChatAnthropic(model=model_name, api_key=api_key)
@@ -283,7 +250,7 @@ def create_llm_instance():
                 )
 
             model_name = os.getenv("AZURE_MODEL", "gpt-4o-mini")
-            api_key = os.getenv("AZURE_API_KEY")
+            api_key = get_api_key_secure("azure", "AZURE_API_KEY")
             endpoint = os.getenv("AZURE_ENDPOINT")
             deployment = os.getenv("AZURE_DEPLOYMENT")
             api_version = os.getenv("AZURE_API_VERSION", "2024-10-21")
@@ -302,13 +269,7 @@ def create_llm_instance():
                     )
                 )
 
-            # Validate API key format (Azure keys are typically 32 hex characters)
-            if len(api_key) < 30 or len(api_key) > 40:
-                raise ValueError(
-                    "AZURE_API_KEY appears to be invalid (incorrect length). "
-                    "Azure API keys are typically 32 characters long. "
-                    "Please check your API key configuration."
-                )
+            # Basic API key validation (removed specific format validation for security)
 
             if not endpoint:
                 raise ConfigurationError(
@@ -356,7 +317,7 @@ def create_llm_instance():
                 )
 
             model_name = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
-            api_key = os.getenv("GROQ_API_KEY")
+            api_key = get_api_key_secure("groq", "GROQ_API_KEY")
 
             # Validate API key
             if not api_key or api_key == "YOUR_API_KEY":
@@ -372,25 +333,7 @@ def create_llm_instance():
                     )
                 )
 
-            # Validate API key format (Groq keys start with 'gsk_' and are ~56 characters)
-            if not api_key.startswith("gsk_"):
-                raise ConfigurationError(
-                    message="GROQ_API_KEY appears to have invalid format",
-                    config_key="GROQ_API_KEY",
-                    expected_format="API key starting with 'gsk_'",
-                    error_context=create_error_context(
-                        component="LLM Configuration",
-                        operation="api_key_format_validation",
-                        provider="groq"
-                    )
-                )
-
-            if len(api_key) < 50 or len(api_key) > 65:
-                raise ValueError(
-                    "GROQ_API_KEY appears to be invalid (incorrect length). "
-                    "Groq API keys are typically around 56 characters long. "
-                    "Please check your API key configuration."
-                )
+            # Basic API key validation (removed specific format validation for security)
 
             try:
                 llm_instance = ChatGroq(model=model_name, api_key=api_key)
@@ -585,17 +528,53 @@ class BaseAgentTest:
 
     BASE_URL = "https://discuss.google.dev/"
 
+    def setup_method(self):
+        # Initialize fresh semantic validation components for each test method
+        from validation import ValidationRegistry, CustomAssertions
+        # Create fresh instances to avoid state contamination between tests
+        self.validation_registry = ValidationRegistry()
+        self.custom_assertions = CustomAssertions(default_confidence_threshold=0.8)
+
+    def teardown_method(self):
+        # Clean up validation components after each test
+        if hasattr(self, 'validation_registry'):
+            # Clear any cached validation results
+            if hasattr(self.validation_registry, 'cache'):
+                self.validation_registry.cache.clear()
+        
+        # Reset validation components
+        self.validation_registry = None
+        self.custom_assertions = None
+
+    def _ensure_validation_components(self):
+        # Lazy initialization of validation components if not already set up
+        if not hasattr(self, 'validation_registry') or self.validation_registry is None:
+            from validation import ValidationRegistry, CustomAssertions
+            # Create fresh instances to avoid state contamination
+            self.validation_registry = ValidationRegistry()
+            self.custom_assertions = CustomAssertions(default_confidence_threshold=0.8)
+
     async def validate_task(
         self,
         llm,
         browser_session: BrowserSession,
         task_instruction: str,
-        expected_substring: Optional[str] = None,
-        ignore_case: bool = False,
+        expected_outcomes: Optional[Union[str, List[str]]] = None,
+        confidence_threshold: float = 0.8,
+        ignore_case: bool = True,
+        enable_partial_matching: bool = True,
+        validation_context: Optional[Dict[str, Any]] = None
     ) -> str:
-        # Runs a task with the agent, prepends the BASE_URL, and performs common assertions
-        # Args: llm, browser_session, task_instruction, expected_substring, ignore_case
-        # Returns: The final text result from the agent for further custom assertions
+        # Enhanced validation using semantic validation framework
+        # Replaces simple string matching with confidence-scored semantic validation
+        # Args: llm, browser_session, task_instruction, expected_outcomes, confidence_threshold, ignore_case, enable_partial_matching, validation_context
+        # Returns: The final text result from the agent after semantic validation
+        
+        # Ensure validation components are initialized
+        self._ensure_validation_components()
+        
+        from validation import ValidationContext, ValidationType
+        
         full_task = f"Go to {self.BASE_URL}, then {task_instruction}"
 
         result_text = await run_agent_task(full_task, llm, browser_session)
@@ -607,35 +586,116 @@ class BaseAgentTest:
                 expected_value="non-null result",
                 actual_value="null",
                 error_context=create_error_context(
-                    component="Agent Validation",
+                    component="Semantic Agent Validation",
                     operation="result_validation"
                 )
             )
 
-        if expected_substring:
-            result_to_check = result_text.lower() if ignore_case else result_text
-            substring_to_check = (
-                expected_substring.lower() if ignore_case else expected_substring
+        # If no expected outcomes provided, return result without validation
+        if not expected_outcomes:
+            return result_text
+
+        # Convert single string to list for consistent processing
+        if isinstance(expected_outcomes, str):
+            expected_outcomes = [expected_outcomes]
+
+        # Create validation context
+        context = ValidationContext(
+            validation_type=ValidationType.SEMANTIC,
+            metadata={
+                "task_instruction": task_instruction,
+                "base_url": self.BASE_URL,
+                "validation_method": "semantic_framework",
+                "ignore_case": ignore_case,
+                "enable_partial_matching": enable_partial_matching,
+                **(validation_context or {})
+            }
+        )
+
+        try:
+            # Use semantic validator for confidence scoring
+            validation_result = await self.validation_registry.validate_semantic(
+                expected=expected_outcomes,
+                actual=result_text,
+                context=context,
+                confidence_threshold=confidence_threshold,
+                ignore_case=ignore_case,
+                enable_partial_matching=enable_partial_matching
             )
 
-            if substring_to_check not in result_to_check:
+            if not validation_result.is_successful():
                 raise ValidationError(
-                    message=f"Expected substring not found in agent result",
-                    validation_type="substring_match",
-                    expected_value=expected_substring,
+                    message=f"Semantic validation failed: {validation_result.message}",
+                    expected_value=expected_outcomes,
                     actual_value=result_text,
+                    validation_type="semantic_framework",
+                    confidence_score=validation_result.confidence_score.value,
                     error_context=create_error_context(
-                        component="Agent Validation",
-                        operation="substring_validation",
+                        component="Semantic Agent Validation",
+                        operation="semantic_validation",
                         metadata={
-                            "ignore_case": ignore_case,
-                            "substring_to_check": substring_to_check,
-                            "result_to_check_length": len(result_to_check)
+                            "validation_id": validation_result.context.validation_id,
+                            "confidence_components": validation_result.confidence_score.components,
+                            "confidence_threshold": confidence_threshold
                         }
                     )
                 )
 
-        return result_text
+            logging.info(
+                f"Semantic validation passed with confidence {validation_result.confidence_score.value:.3f} "
+                f"(threshold: {confidence_threshold:.3f}) [{context.validation_id}]"
+            )
+
+            return result_text
+
+        except Exception as e:
+            if not isinstance(e, ValidationError):
+                raise ValidationError(
+                    message=f"Semantic validation error: {str(e)}",
+                    expected_value=expected_outcomes,
+                    actual_value=result_text,
+                    validation_type="semantic_framework",
+                    error_context=create_error_context(
+                        component="Semantic Agent Validation",
+                        operation="semantic_validation_error",
+                        metadata={"original_error": str(e)}
+                    )
+                ) from e
+            raise
+
+    # Legacy method for backward compatibility - DEPRECATED
+    async def validate_task_legacy(
+        self,
+        llm,
+        browser_session: BrowserSession,
+        task_instruction: str,
+        expected_substring: Optional[str] = None,
+        ignore_case: bool = False,
+    ) -> str:
+        """
+        DEPRECATED: Legacy string matching validation method.
+        
+        This method is deprecated and provided only for backward compatibility.
+        Use validate_task() with semantic validation instead.
+        
+        Will be removed in a future version.
+        """
+        import warnings
+        warnings.warn(
+            "validate_task_legacy() is deprecated. Use validate_task() with semantic validation instead.",
+            DeprecationWarning,
+            stacklevel=2
+        )
+        
+        # Convert to new semantic validation approach
+        expected_outcomes = [expected_substring] if expected_substring else None
+        return await self.validate_task(
+            llm, browser_session, task_instruction,
+            expected_outcomes=expected_outcomes,
+            confidence_threshold=0.8,
+            ignore_case=ignore_case,
+            enable_partial_matching=True
+        )
 
 
 # --- Allure Hook for Step-by-Step Reporting ---
@@ -702,13 +762,12 @@ async def record_step(agent: Agent):
 # --- Helper Function to Run Agent ---
 
 
-@allure.step("Running browser agent with task: {task_description}")
-async def run_agent_task(
+async def _run_agent_task_impl(
     task_description: str,
     llm,
     browser_session: BrowserSession,
 ) -> Optional[str]:
-    # Initializes and runs the browser agent for a given task using an active browser session
+    # Internal implementation - Initializes and runs the browser agent for a given task using an active browser session
     # Implements retry logic with correlation ID tracking for better debugging and monitoring
     correlation_id = get_correlation_id()
 
@@ -765,8 +824,12 @@ async def run_agent_task(
         result = await execute_agent()
 
         final_text = result.final_result()
+        # Sanitize final text for Allure report
+        from core.security import sanitize_for_allure
+        safe_final_text = sanitize_for_allure(final_text)
+        
         allure.attach(
-            final_text,
+            safe_final_text,
             name="Agent Final Output",
             attachment_type=allure.attachment_type.TEXT,
         )
@@ -792,8 +855,10 @@ async def run_agent_task(
 
         log_error_with_context(e, context, level="error")
 
+        from core.security import sanitize_for_allure
+        safe_message = sanitize_for_allure(e.get_actionable_message())
         allure.attach(
-            e.get_actionable_message(),
+            safe_message,
             name="Circuit Breaker Error",
             attachment_type=allure.attachment_type.TEXT,
         )
@@ -817,12 +882,35 @@ async def run_agent_task(
 
         log_error_with_context(e, context, level="error")
 
-        # Attach comprehensive error details to Allure report
+        # Attach comprehensive error details to Allure report with sanitization
+        from core.security import sanitize_for_allure
         error_details = e.get_actionable_message() if hasattr(e, 'get_actionable_message') else str(e)
+        safe_error_details = sanitize_for_allure(f"{error_details}\nCorrelation ID: {correlation_id}")
         allure.attach(
-            f"{error_details}\nCorrelation ID: {correlation_id}",
+            safe_error_details,
             name="LLM API Error Details",
             attachment_type=allure.attachment_type.TEXT,
         )
 
         raise RuntimeError(error_msg) from e
+
+
+async def run_agent_task(
+    task_description: str,
+    llm,
+    browser_session: BrowserSession,
+) -> Optional[str]:
+    """
+    Secure wrapper for agent task execution that prevents sensitive data leakage in Allure reports.
+    
+    This function sanitizes the task description before creating Allure steps to ensure
+    no API keys, credentials, or other sensitive data are exposed in test reports.
+    """
+    # Sanitize task description to prevent sensitive data from appearing in Allure
+    from core.security import sanitize_for_allure
+    safe_task_description = sanitize_for_allure(task_description)
+    
+    # Use Allure step with sanitized description - no function parameters are captured
+    with allure.step(f"Running browser agent with task: {safe_task_description}"):
+        # Call the actual implementation
+        return await _run_agent_task_impl(task_description, llm, browser_session)

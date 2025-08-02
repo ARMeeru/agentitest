@@ -8,6 +8,13 @@ from dataclasses import asdict
 from .base import AgentiTestError, ErrorContext
 from .classification import classify_error, get_recovery_strategy
 
+# Import security utilities for credential masking
+try:
+    from core.security import mask_sensitive_data, SecureLogHandler, setup_secure_logging
+    SECURITY_AVAILABLE = True
+except ImportError:
+    SECURITY_AVAILABLE = False
+
 
 class StructuredErrorLogger:
     # JSON-structured error logger with correlation ID tracking
@@ -71,14 +78,24 @@ class StructuredErrorLogger:
 
         # Add additional fields if provided
         if additional_fields:
+            # Mask sensitive data in additional fields
+            if SECURITY_AVAILABLE:
+                additional_fields = mask_sensitive_data(additional_fields)
             log_entry.update(additional_fields)
 
         # Add cause chain if available
         if hasattr(exception, '__cause__') and exception.__cause__:
+            cause_message = str(exception.__cause__)
+            if SECURITY_AVAILABLE:
+                cause_message = mask_sensitive_data(cause_message)
             log_entry["error"]["cause"] = {
                 "type": type(exception.__cause__).__name__,
-                "message": str(exception.__cause__)
+                "message": cause_message
             }
+
+        # Mask sensitive data in the entire log entry
+        if SECURITY_AVAILABLE:
+            log_entry = mask_sensitive_data(log_entry)
 
         # Log at appropriate level
         log_method = getattr(self.logger, level.lower(), self.logger.error)
@@ -227,9 +244,10 @@ def log_circuit_breaker_event(
 def configure_error_logging(
     level: str = "INFO",
     format_type: str = "json",
-    log_file: Optional[str] = None
+    log_file: Optional[str] = None,
+    enable_security: bool = True
 ):
-    # Configure error logging settings
+    # Configure error logging settings with optional security features
     logger = logging.getLogger("agentitest.errors")
     logger.setLevel(getattr(logging, level.upper()))
 
@@ -244,6 +262,11 @@ def configure_error_logging(
         console_handler.setFormatter(
             logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
         )
+    
+    # Wrap with secure handler if security is available and enabled
+    if enable_security and SECURITY_AVAILABLE:
+        console_handler = SecureLogHandler(console_handler)
+    
     logger.addHandler(console_handler)
 
     # Add file handler if specified
@@ -255,4 +278,14 @@ def configure_error_logging(
             file_handler.setFormatter(
                 logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
             )
+        
+        # Wrap with secure handler if security is available and enabled
+        if enable_security and SECURITY_AVAILABLE:
+            file_handler = SecureLogHandler(file_handler)
+        
         logger.addHandler(file_handler)
+    
+    # Setup global secure logging if available and enabled
+    if enable_security and SECURITY_AVAILABLE:
+        setup_secure_logging()
+        logger.info("Secure logging configured - sensitive data will be masked")

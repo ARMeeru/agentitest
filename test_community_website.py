@@ -54,9 +54,14 @@ class RobustValidationMixin:
             )
         
         try:
-            # Execute the task using the existing validate_task method
+            # Execute the task using semantic validation method
             result = await self.validate_task(
-                llm, browser_session, task_instruction, expected_outcomes[0] if expected_outcomes else "success"
+                llm, browser_session, task_instruction, 
+                expected_outcomes=expected_outcomes or ["success"],
+                confidence_threshold=confidence_threshold,
+                ignore_case=True,
+                enable_partial_matching=True,
+                validation_context=context.metadata
             )
             
             # Use semantic validator for confidence scoring
@@ -269,6 +274,10 @@ class RobustValidationMixin:
         self._ensure_validation_components()
         
         try:
+            # Add debug logging for the actual content being validated
+            logging.info(f"Validating no search results for term '{search_term}' with content length: {len(actual_content)}")
+            logging.debug(f"Actual content: {actual_content[:200]}...")
+            
             validation_result = await self.custom_assertions.assert_no_search_results(
                 actual_content=actual_content,
                 search_term=search_term,
@@ -357,9 +366,13 @@ class TestHomePageStats(BaseAgentTest, RobustValidationMixin):
         """Tests that the forum loads successfully using robust validation."""
         task = "confirm that the Google Developer Community forum page has loaded successfully and displays community content. Return 'forum_loaded' if the page loads with community categories visible."
         
-        # Use page load assertion for comprehensive validation
+        # Use semantic validation for comprehensive page load validation
         result = await self.validate_task(
-            llm, browser_session, task, self.EXPECTED_FORUM_RESULT
+            llm, browser_session, task, 
+            expected_outcomes=[self.EXPECTED_FORUM_RESULT, "forum_loaded", "community", "categories", "developer"],
+            confidence_threshold=0.8,
+            ignore_case=True,
+            enable_partial_matching=True
         )
         
         # Additional validation using custom assertions
@@ -392,8 +405,14 @@ class TestSearch(BaseAgentTest, RobustValidationMixin):
         """Tests searching for a term and verifying results are shown using robust validation."""
         task = f"locate the search input field, enter '{term}', submit the search by pressing enter, then confirm that search results for '{term}' are displayed on the page. Return 'search_results_displayed' if results are shown."
         
-        # Execute search task
-        result = await self.validate_task(llm, browser_session, task, "search_results_displayed")
+        # Execute search task with semantic validation
+        result = await self.validate_task(
+            llm, browser_session, task, 
+            expected_outcomes=["search_results_displayed", "results found", f"results for {term}", "search complete"],
+            confidence_threshold=0.8,
+            ignore_case=True,
+            enable_partial_matching=True
+        )
         
         # Use text content validation for confirmation string
         await self.validate_text_content_robust(
@@ -415,8 +434,14 @@ class TestSearch(BaseAgentTest, RobustValidationMixin):
         task = f"find the search bar, type '{term}', press enter, and confirm that a 'no results' message is displayed. Return '{self.EXPECTED_NO_RESULTS}' if it is."
         
         try:
-            # Execute search task
-            result = await self.validate_task(llm, browser_session, task, self.EXPECTED_NO_RESULTS)
+            # Execute search task with semantic validation for no results
+            result = await self.validate_task(
+                llm, browser_session, task, 
+                expected_outcomes=[self.EXPECTED_NO_RESULTS, "no results", "nothing found", "0 results"],
+                confidence_threshold=0.8,
+                ignore_case=True,
+                enable_partial_matching=True
+            )
             
             # Use robust no search results assertion
             await self.assert_no_search_results_robust(

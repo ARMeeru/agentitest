@@ -1,0 +1,341 @@
+name: Security Scanning
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  schedule:
+    # Run security scans daily at 2 AM UTC
+    - cron: "0 2 * * *"
+
+jobs:
+  security-scan:
+    name: Security Vulnerability Scan
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install safety bandit semgrep pip-audit
+
+      - name: Run Secret Scanning with TruffleHog
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: main
+          head: HEAD
+          extra_args: --debug --only-verified
+
+      - name: Run Dependency Security Scan with Safety
+        run: |
+          echo "Running Safety check for known vulnerabilities..."
+          safety check --json --output safety-report.json || true
+
+      - name: Run Dependency Security Scan with pip-audit
+        run: |
+          echo "Running pip-audit for dependency vulnerabilities..."
+          pip-audit --format=json --output=pip-audit-report.json || true
+
+      - name: Run Static Security Analysis with Bandit
+        run: |
+          echo "Running Bandit static security analysis..."
+          bandit -r . -f json -o bandit-report.json || true
+
+      - name: Run Semgrep Security Scan
+        run: |
+          echo "Running Semgrep security rules..."
+          semgrep --config=auto --json --output=semgrep-report.json . || true
+
+      - name: Custom Security Validation
+        run: |
+          echo "Running custom security validation..."
+          python -c "
+          import sys
+          import os
+          sys.path.append('.')
+
+          try:
+              from core.security import validate_environment_security, get_security_status
+
+              # Validate environment security
+              warnings = validate_environment_security()
+              if warnings:
+                  print('⚠️ Security warnings found:')
+                  for warning in warnings:
+                      print(f'  - {warning}')
+              else:
+                  print('✅ Environment security validation passed')
+
+              # Get security status
+              status = get_security_status()
+              print(f'Security configuration: {status}')
+
+              # Check for .env files that shouldn't be committed
+              env_files = ['.env', '.env.local', '.env.production']
+              for env_file in env_files:
+                  if os.path.exists(env_file):
+                      print(f'⚠️ Found {env_file} - ensure it is in .gitignore')
+
+          except ImportError as e:
+              print(f'⚠️ Could not import security module: {e}')
+          except Exception as e:
+              print(f'❌ Security validation failed: {e}')
+              sys.exit(1)
+          "
+
+      - name: Check for hardcoded secrets
+        run: |
+          echo "Checking for potential hardcoded secrets..."
+
+          # Check for common secret patterns
+          echo "Checking for API key patterns..."
+          if grep -r "sk-[a-zA-Z0-9]" --include="*.py" --include="*.js" --include="*.yaml" --include="*.yml" . || true; then
+            echo "⚠️ Potential OpenAI API key pattern found"
+          fi
+
+          if grep -r "sk-ant-[a-zA-Z0-9]" --include="*.py" --include="*.js" --include="*.yaml" --include="*.yml" . || true; then
+            echo "⚠️ Potential Anthropic API key pattern found"
+          fi
+
+          if grep -r "AIza[a-zA-Z0-9]" --include="*.py" --include="*.js" --include="*.yaml" --include="*.yml" . || true; then
+            echo "⚠️ Potential Google API key pattern found"
+          fi
+
+          # Check for placeholder values that should be replaced
+          echo "Checking for placeholder values..."
+          if grep -r "YOUR_API_KEY" --include="*.py" --include="*.md" --exclude-dir=docs . || true; then
+            echo "ℹ️ Placeholder API keys found (acceptable in documentation)"
+          fi
+
+      - name: Validate .gitignore security
+        run: |
+          echo "Validating .gitignore for security..."
+
+          required_patterns=(
+            ".env"
+            ".env.local"
+            ".env.*.local"
+            "*.key"
+            "*.pem"
+            "secrets.json"
+          )
+
+          if [ -f .gitignore ]; then
+            for pattern in "${required_patterns[@]}"; do
+              if grep -q "$pattern" .gitignore; then
+                echo "✅ $pattern is in .gitignore"
+              else
+                echo "⚠️ $pattern should be added to .gitignore"
+              fi
+            done
+          else
+            echo "❌ .gitignore file not found"
+            exit 1
+          fi
+
+      - name: Generate Security Report
+        if: always()
+        run: |
+          echo "Generating consolidated security report..."
+
+          cat > security-summary.md << EOF
+          # Security Scan Results
+
+          Generated: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          Repository: ${{ github.repository }}
+          Branch: ${{ github.ref_name }}
+          Commit: ${{ github.sha }}
+
+          ## Scan Results Overview
+
+          EOF
+
+          # Process Safety results
+          if [ -f safety-report.json ]; then
+            echo "### Dependency Vulnerabilities (Safety)" >> security-summary.md
+            python -c "
+          import json
+          try:
+              with open('safety-report.json', 'r') as f:
+                  data = json.load(f)
+              if not data:
+                  print('✅ No vulnerabilities found')
+              else:
+                  print(f'❌ {len(data)} vulnerabilities found')
+                  for vuln in data[:5]:  # Show first 5
+                      print(f'- {vuln.get(\"package\", \"unknown\")}: {vuln.get(\"advisory\", \"No description\")}')
+          except:
+              print('Could not process safety report')
+          " >> security-summary.md
+            echo "" >> security-summary.md
+          fi
+
+          # Process Bandit results
+          if [ -f bandit-report.json ]; then
+            echo "### Static Analysis (Bandit)" >> security-summary.md
+            python -c "
+          import json
+          try:
+              with open('bandit-report.json', 'r') as f:
+                  data = json.load(f)
+              results = data.get('results', [])
+              if not results:
+                  print('✅ No security issues found')
+              else:
+                  high = len([r for r in results if r.get('issue_severity') == 'HIGH'])
+                  medium = len([r for r in results if r.get('issue_severity') == 'MEDIUM'])
+                  low = len([r for r in results if r.get('issue_severity') == 'LOW'])
+                  print(f'Found {len(results)} issues: {high} high, {medium} medium, {low} low severity')
+          except:
+              print('Could not process bandit report')
+          " >> security-summary.md
+            echo "" >> security-summary.md
+          fi
+
+          echo "## Next Steps" >> security-summary.md
+          echo "" >> security-summary.md
+          echo "1. Review all high and medium severity findings" >> security-summary.md
+          echo "2. Update vulnerable dependencies" >> security-summary.md
+          echo "3. Address static analysis warnings" >> security-summary.md
+          echo "4. Ensure secrets are properly managed" >> security-summary.md
+
+          echo "Security report generated:"
+          cat security-summary.md
+
+      - name: Upload Security Reports
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: security-reports
+          path: |
+            safety-report.json
+            pip-audit-report.json
+            bandit-report.json
+            semgrep-report.json
+            security-summary.md
+
+      - name: Comment PR with Security Summary
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs');
+
+            if (fs.existsSync('security-summary.md')) {
+              const summary = fs.readFileSync('security-summary.md', 'utf8');
+
+              github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: `## 🔒 Security Scan Results\n\n${summary}`
+              });
+            }
+
+      - name: Fail on Critical Vulnerabilities
+        run: |
+          echo "Checking for critical security issues..."
+
+          # Check Safety results for critical vulnerabilities
+          critical_count=0
+
+          if [ -f safety-report.json ]; then
+            critical_safety=$(python -c "
+          import json
+          try:
+              with open('safety-report.json', 'r') as f:
+                  data = json.load(f)
+              print(len([v for v in data if 'critical' in v.get('advisory', '').lower()]))
+          except:
+              print('0')
+          ")
+            critical_count=$((critical_count + critical_safety))
+          fi
+
+          # Check Bandit results for high severity issues
+          if [ -f bandit-report.json ]; then
+            high_bandit=$(python -c "
+          import json
+          try:
+              with open('bandit-report.json', 'r') as f:
+                  data = json.load(f)
+              results = data.get('results', [])
+              print(len([r for r in results if r.get('issue_severity') == 'HIGH']))
+          except:
+              print('0')
+          ")
+            critical_count=$((critical_count + high_bandit))
+          fi
+
+          echo "Total critical/high severity issues: $critical_count"
+
+          if [ $critical_count -gt 0 ]; then
+            echo "❌ Critical security issues found. Please address before merging."
+            exit 1
+          else
+            echo "✅ No critical security issues found."
+          fi
+
+  dependency-review:
+    name: Dependency Review
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Dependency Review
+        uses: actions/dependency-review-action@v3
+        with:
+          fail-on-severity: high
+
+  secrets-baseline:
+    name: Update Secrets Baseline
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install detect-secrets
+        run: |
+          pip install detect-secrets
+
+      - name: Generate secrets baseline
+        run: |
+          detect-secrets scan --baseline .secrets.baseline
+
+      - name: Commit updated baseline
+        uses: stefanzweifel/git-auto-commit-action@v4
+        with:
+          commit_message: "Update secrets baseline [skip ci]"
+          file_pattern: .secrets.baseline
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
