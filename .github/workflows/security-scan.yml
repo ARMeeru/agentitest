@@ -311,6 +311,10 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
 
+    permissions:
+      contents: read
+      pull-requests: write
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -325,6 +329,10 @@ jobs:
     name: Update Secrets Baseline
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
+
+    permissions:
+      contents: write
+      actions: read
 
     steps:
       - name: Checkout code
