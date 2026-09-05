@@ -1,3 +1,5 @@
+> **Archived (September 2026).** This was my 2025 pass at LLM-driven browser testing, built on [kweinmeister/agentitest](https://github.com/kweinmeister/agentitest) with multi-provider LLM support, retry handling, and a validation layer. I stopped maintaining it in mid 2025. The successor is [reprove](https://github.com/ARMeeru/reprove), which takes a different line on the same problem: a test result is not a finding until it fails again in fresh sessions, so reprove gates on cross-session reproduction instead of scoring confidence.
+
 # 🤖 AgentiTest: Agentic Test Automation
 
 This framework uses an LLM to automate browser testing through high-level, natural language commands. It's designed to be a flexible and developer-friendly tool for creating robust and maintainable browser tests.
